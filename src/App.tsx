@@ -1,6 +1,6 @@
 import {useState} from 'react';
 import {
-	parseProtectedIds,
+	parsePackageIds,
 } from './utils.js';
 import type {StartRemovalMessage} from './types.js';
 
@@ -17,10 +17,7 @@ function App() {
 	const [status, setStatus] = useState('');
 
 	const handleSave = () => {
-		const ids = inputIds
-			.split(/[\s,]+/v)
-			.map(id => id.trim())
-			.filter(id => id.length > 0);
+		const ids = parsePackageIds(inputIds);
 
 		chrome.storage.local.set({
 			[TRASH_STORAGE_KEY]: ids,
@@ -63,20 +60,18 @@ function App() {
 	};
 
 	const handleStart = () => {
-		const ids = inputIds
-			.split(/[\s,]+/v)
-			.map(id => id.trim())
-			.filter(id => id.length > 0);
+		const ids = parsePackageIds(inputIds);
 
 		if (ids.length === 0) {
 			setStatus('Please enter at least one package ID.');
 			return;
 		}
 
-		const protectedIds = parseProtectedIds(protectedIdsInput);
+		const protectedIds = parsePackageIds(protectedIdsInput);
 		const protectedPatternsRaw = protectedPatternsInput
 			.split(/\r?\n/v)
 			.map(line => line.trim())
+			.map(line => line.replace(/,$/v, '').replaceAll(/^["']|["']$/gv, ''))
 			.filter(line => line.length > 0);
 
 		chrome.storage.local.set({
@@ -94,9 +89,12 @@ function App() {
 						protectedPatternsRaw,
 						dryRun: isDryRun,
 					};
-					void chrome.tabs.sendMessage(tabs[0].id, message);
-					setStatus(`Started ${isDryRun ? 'dry run' : 'cleanup'} for ${ids.length} ID(s). Check the Steam licenses page.`);
-					window.close();
+					chrome.tabs.sendMessage(tabs[0].id, message).then(() => {
+						setStatus(`Started ${isDryRun ? 'dry run' : 'cleanup'} for ${ids.length} ID(s). Check the Steam licenses page.`);
+						window.close();
+					}).catch(() => {
+						setStatus('Error: Could not reach the Steam tab. Please reload the Steam licenses page (F5) and try again.');
+					});
 				} else {
 					void chrome.tabs.create({url: 'https://store.steampowered.com/account/licenses/'});
 					setStatus('Opened Steam licenses page. Re-open the extension to start.');

@@ -56,10 +56,23 @@ export function parseProtectedIds(input: string): string[] {
 		.filter(chunk => chunk.length > 0);
 }
 
+/**
+ Robustly extracts Steam package IDs (digit-only sequences) from any input.
+ Handles plain lists, JSON arrays like ["20187", "20199"], and mixed text.
+ */
+export function parsePackageIds(input: string): string[] {
+	const matches = input.match(/\d+/gv);
+	return matches ? [...matches] : [];
+}
+
 export function parseProtectedTitlePatterns(input: string): RegExp[] {
 	return input
 		.split(/\r?\n/v)
 		.map(line => line.trim())
+		// Strip trailing commas (e.g. from JSON lists: "3DMark",)
+		.map(line => line.replace(/,$/v, ''))
+		// Strip surrounding quotes (single or double)
+		.map(line => line.replaceAll(/^["']|["']$/gv, ''))
 		.filter(line => line.length > 0)
 		.map(line => parseProtectedTitlePattern(line));
 }
