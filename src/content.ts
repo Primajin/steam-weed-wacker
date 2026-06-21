@@ -17,6 +17,10 @@ import type {
 
 const METADATA_TIMEOUT_MS = 5000;
 
+const ITEM_ROW_HEIGHT = 58; // Fixed height (px) of each per-item decision row
+const VIRTUAL_LIST_HEIGHT = 180; // Max-height (px) of the scrollable list container
+const VIRTUAL_BUFFER = 2; // Extra rows to render above and below the visible window
+
 const CACHE_PKG_TO_APP_KEY = 'cache_package_to_app';
 const CACHE_APP_METADATA_KEY = 'cache_app_metadata';
 const PYTHON_PEARLS_STORAGE_KEY = 'pythonImportedPearls';
@@ -130,15 +134,9 @@ function updateUi(
 		.map(reason => `<li>${reason}: ${countReason(report, reason)}</li>`)
 		.join('');
 
-	const itemsHtml = report.items
-		.map(item => `
-			<li style="margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #2a475e;">
-				<div><strong>${escapeHtml(item.packageId)}</strong> — ${escapeHtml(item.reason)}</div>
-				<div style="font-size: 11px; color: #8f98a0;">${escapeHtml(item.title)}</div>
-				${item.details === undefined ? '' : `<div style="font-size: 11px; color: #e5a822;">${escapeHtml(item.details)}</div>`}
-			</li>
-		`)
-		.join('');
+	// Display newest items first (reverse order)
+	const reversedItems = report.items.toReversed();
+	const totalItems = reversedItems.length;
 
 	dashboard.innerHTML = `
 		<h3 style="margin: 0 0 10px 0; color: #66c0f4; font-size: 18px; text-transform: uppercase; letter-spacing: 1px;">🧹 Steam Auto-Cleanup</h3>
@@ -169,9 +167,54 @@ function updateUi(
 		</div>
 		<div style="font-size: 12px;">
 			<strong>Per-item decisions</strong>
-			<ul style="margin: 6px 0 0 0; padding: 0 0 0 14px; max-height: 180px; overflow-y: auto;">${itemsHtml}</ul>
+			<div id="sww-virtual-scroll" style="margin: 6px 0 0 0; max-height: ${VIRTUAL_LIST_HEIGHT}px; overflow-y: auto; position: relative;">
+				<div id="sww-virtual-spacer" style="height: ${totalItems * ITEM_ROW_HEIGHT}px; position: relative;">
+					<ul id="sww-virtual-list" style="margin: 0; padding: 0 0 0 14px; list-style: none; position: absolute; top: 0; left: 0; right: 0;"></ul>
+				</div>
+			</div>
 		</div>
 	`;
+
+	const scrollContainer = dashboard.querySelector<HTMLDivElement>('#sww-virtual-scroll');
+	const listElement = dashboard.querySelector<HTMLUListElement>('#sww-virtual-list');
+
+	function renderVisibleItems(scrollTop: number): void {
+		if (listElement === null || totalItems === 0) {
+			return;
+		}
+
+		const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_ROW_HEIGHT) - VIRTUAL_BUFFER);
+		const visibleCount = Math.ceil(VIRTUAL_LIST_HEIGHT / ITEM_ROW_HEIGHT) + (VIRTUAL_BUFFER * 2);
+		const endIndex = Math.min(totalItems, startIndex + visibleCount);
+
+		listElement.style.top = `${startIndex * ITEM_ROW_HEIGHT}px`;
+		listElement.innerHTML = reversedItems
+			.slice(startIndex, endIndex)
+			.map(item => `
+				<li style="height: ${ITEM_ROW_HEIGHT}px; box-sizing: border-box; padding-bottom: 6px; border-bottom: 1px solid #2a475e; overflow: hidden;">
+					<div><strong>${escapeHtml(item.packageId)}</strong> — ${escapeHtml(item.reason)}</div>
+					<div style="font-size: 11px; color: #8f98a0;">${escapeHtml(item.title)}</div>
+					${item.details === undefined ? '' : `<div style="font-size: 11px; color: #e5a822;">${escapeHtml(item.details)}</div>`}
+				</li>
+			`)
+			.join('');
+	}
+
+	renderVisibleItems(0);
+
+	if (scrollContainer !== null) {
+		let rafId: number | undefined;
+		scrollContainer.addEventListener('scroll', () => {
+			if (rafId !== undefined) {
+				cancelAnimationFrame(rafId);
+			}
+
+			rafId = requestAnimationFrame(() => {
+				rafId = undefined;
+				renderVisibleItems(scrollContainer.scrollTop);
+			});
+		});
+	}
 }
 
 async function fetchJsonWithTimeout(url: string): Promise<Response> {
@@ -395,17 +438,20 @@ async function deletePackageWithRetry(
 
 				if (payload.success === 84) {
 					void chrome.runtime.sendMessage({type: 'NOTIFY_BAN'});
-					for (let i = RATE_LIMIT_COOLDOWN_SECONDS; i > 0; i--) {
+					const endAt = Date.now() + (RATE_LIMIT_COOLDOWN_SECONDS * 1000);
+					let remaining = RATE_LIMIT_COOLDOWN_SECONDS;
+					while (remaining > 0) {
 						updateUi(
 							dashboard,
 							report,
 							packageId,
 							`<div style="background: rgba(229, 64, 34, 0.2); border: 1px solid #e54022; padding: 8px; border-radius: 4px; color: #e54022; margin-bottom: 10px; text-align: center; font-size: 12px;">
-								🛑 Rate limit exceeded (Code 84). Waiting ${i}s before retry.
+								🛑 Rate limit exceeded (Code 84). Waiting ${remaining}s before retry.
 							</div>`,
 						);
 						// eslint-disable-next-line no-await-in-loop
-						await sleep(1000);
+						await sleep(500);
+						remaining = Math.ceil((endAt - Date.now()) / 1000);
 					}
 
 					continue;
@@ -421,17 +467,20 @@ async function deletePackageWithRetry(
 					waitTime = DEFAULT_RETRY_AFTER_SECONDS;
 				}
 
-				for (let i = waitTime; i > 0; i--) {
+				const endAt = Date.now() + (waitTime * 1000);
+				let remaining = waitTime;
+				while (remaining > 0) {
 					updateUi(
 						dashboard,
 						report,
 						packageId,
 						`<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
-							⚠️ HTTP 429. Waiting ${i}s before retry.
+							⚠️ HTTP 429. Waiting ${remaining}s before retry.
 						</div>`,
 					);
 					// eslint-disable-next-line no-await-in-loop
-					await sleep(1000);
+					await sleep(500);
+					remaining = Math.ceil((endAt - Date.now()) / 1000);
 				}
 
 				continue;
