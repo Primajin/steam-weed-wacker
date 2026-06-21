@@ -9,6 +9,11 @@ import {
 	isProtectedLicense,
 	getSteamSessionId,
 	PROTECTED_KEYWORDS,
+	parseProtectedIds,
+	parseProtectedTitlePatterns,
+	matchesProtectedTitlePattern,
+	shouldProtectHiddenGem,
+	DEFAULT_HIDDEN_GEM_MIN_REVIEWS,
 } from './utils.js';
 
 describe('formatTime', () => {
@@ -105,5 +110,72 @@ describe('getSteamSessionId', () => {
 		script.textContent = '\n\t\tvar g_sessionID  =  "spaced_id_456";\n\t';
 		document.head.append(script);
 		expect(getSteamSessionId()).toBe('spaced_id_456');
+	});
+});
+
+describe('parseProtectedIds', () => {
+	it('parses comma/newline/space separated IDs', () => {
+		expect(parseProtectedIds('730, 570\n440 570')).toEqual([440, 570, 730]);
+	});
+
+	it('drops invalid, negative and zero values', () => {
+		expect(parseProtectedIds('abc, -1, 0, 42')).toEqual([42]);
+	});
+});
+
+describe('parseProtectedTitlePatterns', () => {
+	it('parses plain-text patterns', () => {
+		expect(parseProtectedTitlePatterns('Half Life\nWorld of')).toEqual([
+			{raw: 'Half Life', type: 'contains', value: 'half life'},
+			{raw: 'World of', type: 'contains', value: 'world of'},
+		]);
+	});
+
+	it('parses regex syntax and preserves flags', () => {
+		expect(parseProtectedTitlePatterns('/^World of/i')).toEqual([
+			{
+				raw: '/^World of/i',
+				type: 'regex',
+				source: '^World of',
+				flags: 'i',
+			},
+		]);
+	});
+
+	it('falls back to contains when regex is invalid', () => {
+		expect(parseProtectedTitlePatterns('/[invalid/')).toEqual([
+			{raw: '/[invalid/', type: 'contains', value: '/[invalid/'},
+		]);
+	});
+});
+
+describe('matchesProtectedTitlePattern', () => {
+	it('matches contains rules case-insensitively', () => {
+		const patterns = parseProtectedTitlePatterns('half life');
+		expect(matchesProtectedTitlePattern('Half Life 2', patterns)).toBe(true);
+	});
+
+	it('matches regex rules against original title', () => {
+		const patterns = parseProtectedTitlePatterns('/^World of/i');
+		expect(matchesProtectedTitlePattern('World of Tanks', patterns)).toBe(true);
+		expect(matchesProtectedTitlePattern('The World of Tanks', patterns)).toBe(false);
+	});
+});
+
+describe('shouldProtectHiddenGem', () => {
+	it('protects very positive free titles above threshold', () => {
+		expect(shouldProtectHiddenGem(true, 'Very Positive', DEFAULT_HIDDEN_GEM_MIN_REVIEWS + 10)).toBe(true);
+	});
+
+	it('does not protect paid titles', () => {
+		expect(shouldProtectHiddenGem(false, 'Overwhelmingly Positive', 999_999)).toBe(false);
+	});
+
+	it('does not protect titles below review threshold', () => {
+		expect(shouldProtectHiddenGem(true, 'Very Positive', DEFAULT_HIDDEN_GEM_MIN_REVIEWS - 1)).toBe(false);
+	});
+
+	it('does not protect titles without known sentiment', () => {
+		expect(shouldProtectHiddenGem(true, 'Mixed', 20_000)).toBe(false);
 	});
 });

@@ -1,9 +1,20 @@
 import {useState} from 'react';
+import {
+	parseProtectedIds,
+	parseProtectedTitlePatterns,
+} from './utils.js';
+import type {StartRemovalMessage} from './types.js';
 
-const STORAGE_KEY = 'trashPackageIds';
+const TRASH_STORAGE_KEY = 'trashPackageIds';
+const PROTECTED_IDS_STORAGE_KEY = 'protectedPackageIds';
+const PROTECTED_PATTERNS_STORAGE_KEY = 'protectedTitlePatterns';
+const DRY_RUN_STORAGE_KEY = 'dryRunMode';
 
 function App() {
 	const [inputIds, setInputIds] = useState('');
+	const [protectedIdsInput, setProtectedIdsInput] = useState('');
+	const [protectedPatternsInput, setProtectedPatternsInput] = useState('');
+	const [isDryRun, setIsDryRun] = useState(true);
 	const [status, setStatus] = useState('');
 
 	const handleSave = () => {
@@ -12,21 +23,41 @@ function App() {
 			.map(id => id.trim())
 			.filter(id => id.length > 0);
 
-		chrome.storage.local.set({[STORAGE_KEY]: ids}, () => {
+		chrome.storage.local.set({
+			[TRASH_STORAGE_KEY]: ids,
+			[PROTECTED_IDS_STORAGE_KEY]: protectedIdsInput,
+			[PROTECTED_PATTERNS_STORAGE_KEY]: protectedPatternsInput,
+			[DRY_RUN_STORAGE_KEY]: isDryRun,
+		}, () => {
 			setStatus(`Saved ${ids.length} package ID(s).`);
 		});
 	};
 
 	const handleLoad = () => {
-		chrome.storage.local.get([STORAGE_KEY], result => {
-			const ids = (result[STORAGE_KEY] as string[] | undefined) ?? [];
-			setInputIds(ids.join('\n'));
-			setStatus(`Loaded ${ids.length} package ID(s).`);
-		});
+		chrome.storage.local.get(
+			[
+				TRASH_STORAGE_KEY,
+				PROTECTED_IDS_STORAGE_KEY,
+				PROTECTED_PATTERNS_STORAGE_KEY,
+				DRY_RUN_STORAGE_KEY,
+			],
+			result => {
+				const ids = (result[TRASH_STORAGE_KEY] as string[] | undefined) ?? [];
+				const savedProtectedIds = (result[PROTECTED_IDS_STORAGE_KEY] as string | undefined) ?? '';
+				const savedProtectedPatterns = (result[PROTECTED_PATTERNS_STORAGE_KEY] as string | undefined) ?? '';
+				const isDryRunSetting = (result[DRY_RUN_STORAGE_KEY] as boolean | undefined) ?? true;
+
+				setInputIds(ids.join('\n'));
+				setProtectedIdsInput(savedProtectedIds);
+				setProtectedPatternsInput(savedProtectedPatterns);
+				setIsDryRun(isDryRunSetting);
+				setStatus(`Loaded ${ids.length} package ID(s).`);
+			},
+		);
 	};
 
 	const handleClear = () => {
-		chrome.storage.local.remove(STORAGE_KEY, () => {
+		chrome.storage.local.remove(TRASH_STORAGE_KEY, () => {
 			setInputIds('');
 			setStatus('Cleared saved package IDs.');
 		});
@@ -43,11 +74,31 @@ function App() {
 			return;
 		}
 
-		chrome.storage.local.set({[STORAGE_KEY]: ids}, () => {
+		const protectedIds = parseProtectedIds(protectedIdsInput);
+		const protectedPatterns = parseProtectedTitlePatterns(protectedPatternsInput);
+		const protectedPatternsRaw = protectedPatternsInput
+			.split(/\r?\n/v)
+			.map(line => line.trim())
+			.filter(line => line.length > 0);
+
+		chrome.storage.local.set({
+			[TRASH_STORAGE_KEY]: ids,
+			[PROTECTED_IDS_STORAGE_KEY]: protectedIdsInput,
+			[PROTECTED_PATTERNS_STORAGE_KEY]: protectedPatternsInput,
+			[DRY_RUN_STORAGE_KEY]: isDryRun,
+		}, () => {
 			chrome.tabs.query({url: '*://store.steampowered.com/account/licenses/'}, tabs => {
 				if (tabs.length > 0 && tabs[0]?.id !== undefined && tabs[0].id !== null) {
-					void chrome.tabs.sendMessage(tabs[0].id, {type: 'START_CLEANUP', ids});
-					setStatus(`Started cleanup for ${ids.length} ID(s). Check the Steam licenses page.`);
+					const message: StartRemovalMessage = {
+						type: 'START_REMOVAL',
+						ids,
+						protectedIds,
+						protectedPatternsRaw,
+						protectedPatterns,
+						dryRun: isDryRun,
+					};
+					void chrome.tabs.sendMessage(tabs[0].id, message);
+					setStatus(`Started ${isDryRun ? 'dry run' : 'cleanup'} for ${ids.length} ID(s). Check the Steam licenses page.`);
 					window.close();
 				} else {
 					void chrome.tabs.create({url: 'https://store.steampowered.com/account/licenses/'});
@@ -102,11 +153,88 @@ function App() {
 				}}
 			/>
 
+			<label
+				htmlFor='protected-ids'
+				style={{
+					display: 'block', fontSize: 12, marginTop: 10, marginBottom: 4, color: '#8f98a0',
+				}}
+			>
+				Protected IDs (never touch)
+			</label>
+			<textarea
+				id='protected-ids'
+				value={protectedIdsInput}
+				onChange={event => {
+					setProtectedIdsInput(event.target.value);
+				}}
+				placeholder='730&#10;570'
+				rows={3}
+				style={{
+					width: '100%',
+					boxSizing: 'border-box',
+					background: '#1b2838',
+					border: '1px solid #2a475e',
+					color: '#c6d4df',
+					borderRadius: 4,
+					padding: 8,
+					fontSize: 13,
+					resize: 'vertical',
+					fontFamily: 'monospace',
+				}}
+			/>
+
+			<label
+				htmlFor='protected-patterns'
+				style={{
+					display: 'block', fontSize: 12, marginTop: 10, marginBottom: 4, color: '#8f98a0',
+				}}
+			>
+				Protected title patterns (one per line, plain text or /regex/)
+			</label>
+			<textarea
+				id='protected-patterns'
+				value={protectedPatternsInput}
+				onChange={event => {
+					setProtectedPatternsInput(event.target.value);
+				}}
+				placeholder={'Half Life\n/^World of/iu'}
+				rows={4}
+				style={{
+					width: '100%',
+					boxSizing: 'border-box',
+					background: '#1b2838',
+					border: '1px solid #2a475e',
+					color: '#c6d4df',
+					borderRadius: 4,
+					padding: 8,
+					fontSize: 13,
+					resize: 'vertical',
+					fontFamily: 'monospace',
+				}}
+			/>
+
+			<label
+				htmlFor='dry-run'
+				style={{
+					display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 10, color: '#c6d4df',
+				}}
+			>
+				<input
+					id='dry-run'
+					type='checkbox'
+					checked={isDryRun}
+					onChange={event => {
+						setIsDryRun(event.target.checked);
+					}}
+				/>
+				Dry Run (no deletions)
+			</label>
+
 			<div style={{
 				display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap',
 			}}>
 				<button onClick={handleStart} style={btnStyle('#1a9bdc')}>
-					▶ Start Cleanup
+					▶ {isDryRun ? 'Start Dry Run' : 'Start Cleanup'}
 				</button>
 				<button onClick={handleSave} style={btnStyle('#2a475e')}>
 					💾 Save IDs
