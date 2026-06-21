@@ -75,11 +75,11 @@ describe('getSteamSessionId', () => {
 		document.body.innerHTML = '';
 	});
 
-	it('returns null when no scripts are on the page', () => {
+	it('returns undefined when no scripts are on the page', () => {
 		expect(getSteamSessionId()).toBeUndefined();
 	});
 
-	it('returns null when an inline script does not contain the session ID', () => {
+	it('returns undefined when an inline script does not contain the session ID', () => {
 		const script = document.createElement('script');
 		script.textContent = 'var someOtherVar = "hello";';
 		document.head.append(script);
