@@ -439,19 +439,19 @@ async function deletePackageWithRetry(
 				if (payload.success === 84) {
 					void chrome.runtime.sendMessage({type: 'NOTIFY_BAN'});
 					const endAt = Date.now() + (RATE_LIMIT_COOLDOWN_SECONDS * 1000);
-					let remaining84 = Math.ceil((endAt - Date.now()) / 1000);
-					while (remaining84 > 0) {
+					let remaining = RATE_LIMIT_COOLDOWN_SECONDS;
+					while (remaining > 0) {
 						updateUi(
 							dashboard,
 							report,
 							packageId,
 							`<div style="background: rgba(229, 64, 34, 0.2); border: 1px solid #e54022; padding: 8px; border-radius: 4px; color: #e54022; margin-bottom: 10px; text-align: center; font-size: 12px;">
-								🛑 Rate limit exceeded (Code 84). Waiting ${remaining84}s before retry.
+								🛑 Rate limit exceeded (Code 84). Waiting ${remaining}s before retry.
 							</div>`,
 						);
 						// eslint-disable-next-line no-await-in-loop
 						await sleep(500);
-						remaining84 = Math.ceil((endAt - Date.now()) / 1000);
+						remaining = Math.ceil((endAt - Date.now()) / 1000);
 					}
 
 					continue;
@@ -468,19 +468,19 @@ async function deletePackageWithRetry(
 				}
 
 				const endAt = Date.now() + (waitTime * 1000);
-				let remaining429 = Math.ceil((endAt - Date.now()) / 1000);
-				while (remaining429 > 0) {
+				let remaining = waitTime;
+				while (remaining > 0) {
 					updateUi(
 						dashboard,
 						report,
 						packageId,
 						`<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
-							⚠️ HTTP 429. Waiting ${remaining429}s before retry.
+							⚠️ HTTP 429. Waiting ${remaining}s before retry.
 						</div>`,
 					);
 					// eslint-disable-next-line no-await-in-loop
 					await sleep(500);
-					remaining429 = Math.ceil((endAt - Date.now()) / 1000);
+					remaining = Math.ceil((endAt - Date.now()) / 1000);
 				}
 
 				continue;
