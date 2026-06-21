@@ -39,7 +39,7 @@ function buildLinkMap(): Map<string, HTMLAnchorElement> {
 }
 
 function formatTime(totalSeconds: number): string {
-  if (totalSeconds <= 0) return 'Almost done...'
+  if (totalSeconds <= 0) return 'Almost Done...'
   const h = Math.floor(totalSeconds / 3600)
   const m = Math.floor((totalSeconds % 3600) / 60)
   const s = Math.ceil(totalSeconds % 60)
@@ -229,10 +229,10 @@ async function removeTrashLicenses(trashPackageIds: string[]): Promise<void> {
               currentPackageId,
             )
           } else if (data?.success === 84) {
-            // EResult 84 = RateLimitExceeded (Backend Ban)
+            // EResult 84 = Rate Limit Exceeded
             const waitTimeSecs = 3600
             console.warn(
-              `🛑 Backend ban (EResult 84) for ID ${currentPackageId}! Pausing for 1 hour.`,
+              `🛑 Rate limit exceeded (EResult 84) for ID ${currentPackageId}! Pausing for 1 hour.`,
             )
 
             chrome.runtime.sendMessage({ type: 'NOTIFY_BAN' })
@@ -248,7 +248,7 @@ async function removeTrashLicenses(trashPackageIds: string[]): Promise<void> {
                 currentPackageId,
                 i,
                 `<div style="background: rgba(229, 64, 34, 0.2); border: 1px solid #e54022; padding: 10px; border-radius: 4px; color: #e54022; margin-bottom: 15px; text-align: center; font-weight: bold; font-size: 13px;">
-                  🛑 Backend limit reached (Code 84)!<br>Pausing for 1 hour...<br>Waiting ${i} more seconds.
+                  🛑 Rate limit exceeded (Code 84)!<br>Pausing for 1 hour...<br>Waiting ${i} more seconds.
                 </div>`,
               )
               await sleep(1000)
