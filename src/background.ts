@@ -3,7 +3,7 @@ chrome.runtime.onMessage.addListener((request: {type: string}) => {
 		return;
 	}
 
-	chrome.notifications.create('steam-ban-alert', {
+	void chrome.notifications.create('steam-ban-alert', {
 		type: 'basic',
 		iconUrl: 'icons/icon128.png',
 		title: 'Steam Backend Limit Reached',
@@ -17,7 +17,7 @@ chrome.runtime.onMessage.addListener((request: {type: string}) => {
 
 chrome.alarms.onAlarm.addListener(alarm => {
 	if (alarm.name === 'banCooldown') {
-		chrome.notifications.create('steam-resume-alert', {
+		void chrome.notifications.create('steam-resume-alert', {
 			type: 'basic',
 			iconUrl: 'icons/icon128.png',
 			title: 'Cooldown finished!',
