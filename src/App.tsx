@@ -2,12 +2,13 @@ import {useState} from 'react';
 import {
 	parsePackageIds,
 } from './utils.js';
-import type {StartRemovalMessage} from './types.js';
+import type {GetPageIdsResponse, StartRemovalMessage} from './types.js';
 
 const TRASH_STORAGE_KEY = 'trashPackageIds';
 const PROTECTED_IDS_STORAGE_KEY = 'protectedPackageIds';
 const PROTECTED_PATTERNS_STORAGE_KEY = 'protectedTitlePatterns';
 const DRY_RUN_STORAGE_KEY = 'dryRunMode';
+const PYTHON_PEARLS_STORAGE_KEY = 'pythonImportedPearls';
 
 function App() {
 	const [inputIds, setInputIds] = useState('');
@@ -15,6 +16,7 @@ function App() {
 	const [protectedPatternsInput, setProtectedPatternsInput] = useState('');
 	const [isDryRun, setIsDryRun] = useState(true);
 	const [status, setStatus] = useState('');
+	const [rawJsonImport, setRawJsonImport] = useState('');
 
 	const handleSave = () => {
 		const ids = parsePackageIds(inputIds);
@@ -103,6 +105,63 @@ function App() {
 		});
 	};
 
+	const handleCopyPageIds = () => {
+		chrome.tabs.query({url: '*://store.steampowered.com/account/licenses/'}, tabs => {
+			if (tabs.length > 0 && tabs[0]?.id !== undefined && tabs[0].id !== null) {
+				chrome.tabs.sendMessage(tabs[0].id, {type: 'GET_PAGE_IDS'}).then((response: GetPageIdsResponse) => {
+					const idList = response.ids.join('\n');
+					setInputIds(idList);
+					setStatus(`Loaded ${response.ids.length} ID(s) from the Steam licenses page.`);
+				}).catch(() => {
+					setStatus('Error: Could not reach the Steam tab. Please reload the Steam licenses page (F5) and try again.');
+				});
+			} else {
+				void chrome.tabs.create({url: 'https://store.steampowered.com/account/licenses/'});
+				setStatus('Opened Steam licenses page. Re-open the extension to load IDs.');
+			}
+		});
+	};
+
+	const handlePythonImport = () => {
+		if (rawJsonImport.trim().length === 0) {
+			setStatus('Please paste your JSON content first.');
+			return;
+		}
+
+		let data: Record<string, {status: string}>;
+		try {
+			data = JSON.parse(rawJsonImport) as Record<string, {status: string}>;
+		} catch (error) {
+			setStatus(`JSON parsing failed: ${(error as Error).message}`);
+			return;
+		}
+
+		const trashIds: string[] = [];
+		const pearlIds: string[] = [];
+
+		for (const [pid, info] of Object.entries(data)) {
+			if (info.status.includes('TRASH')) {
+				trashIds.push(pid);
+			} else if (
+				info.status.includes('PEARL')
+				|| info.status.includes('KEEP')
+				|| info.status.includes('HAM')
+			) {
+				pearlIds.push(pid);
+			}
+		}
+
+		setInputIds(trashIds.join('\n'));
+
+		chrome.storage.local.set({
+			[TRASH_STORAGE_KEY]: trashIds,
+			[PYTHON_PEARLS_STORAGE_KEY]: pearlIds,
+		}, () => {
+			setStatus(`Python import done: ${trashIds.length} trash IDs loaded, ${pearlIds.length} pearls permanently protected.`);
+			setRawJsonImport('');
+		});
+	};
+
 	return (
 		<div style={{
 			width: 360, padding: 16, fontFamily: 'Arial, sans-serif', background: '#171a21', color: '#c6d4df', minHeight: 300,
@@ -112,6 +171,37 @@ function App() {
 			}}>
 				🧹 Steam Weed Wacker
 			</h2>
+
+			<div style={{marginBottom: 15, borderBottom: '1px solid #2a475e', paddingBottom: 15}}>
+				<label style={{
+					display: 'block', fontSize: 12, color: '#66c0f4', marginBottom: 5, fontWeight: 'bold',
+				}}>
+					🐍 Python Progress Import (trash_check_progress.json)
+				</label>
+				<textarea
+					placeholder='Paste the full content of your JSON file here...'
+					value={rawJsonImport}
+					onChange={event => {
+						setRawJsonImport(event.target.value);
+					}}
+					rows={3}
+					style={{
+						width: '100%',
+						boxSizing: 'border-box',
+						background: '#141f2c',
+						border: '1px solid #2a475e',
+						color: '#c6d4df',
+						borderRadius: 4,
+						padding: 6,
+						fontSize: 11,
+						fontFamily: 'monospace',
+						resize: 'vertical',
+					}}
+				/>
+				<button onClick={handlePythonImport} style={{...btnStyle('#a4d007'), marginTop: 5, width: '100%'}}>
+					📥 Import data from Python script
+				</button>
+			</div>
 
 			<p style={{fontSize: 12, color: '#8f98a0', margin: '0 0 10px 0'}}>
 				Paste your trash package IDs below (one per line or comma-separated).
@@ -230,6 +320,9 @@ function App() {
 			}}>
 				<button onClick={handleStart} style={btnStyle('#1a9bdc')}>
 					▶ {isDryRun ? 'Start Dry Run' : 'Start Cleanup'}
+				</button>
+				<button onClick={handleCopyPageIds} style={btnStyle('#2a475e')}>
+					📋 Copy All Page IDs
 				</button>
 				<button onClick={handleSave} style={btnStyle('#2a475e')}>
 					💾 Save IDs
