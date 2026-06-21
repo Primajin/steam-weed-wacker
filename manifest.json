@@ -9,7 +9,8 @@
     "alarms"
   ],
   "host_permissions": [
-    "*://store.steampowered.com/*"
+    "*://store.steampowered.com/*",
+    "*://login.steampowered.com/*"
   ],
   "action": {
     "default_popup": "index.html",
