@@ -1,0 +1,28 @@
+chrome.runtime.onMessage.addListener((request) => {
+  if (request.type === 'NOTIFY_BAN') {
+    chrome.notifications.create('steam-ban-alert', {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'Steam Backend Limit Reached',
+      message:
+        'The Wacker is pausing for 60 minutes. You will be notified when it resumes!',
+      priority: 2,
+    })
+
+    // Set alarm for 60 minutes
+    chrome.alarms.create('banCooldown', { delayInMinutes: 60 })
+  }
+})
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'banCooldown') {
+    chrome.notifications.create('steam-resume-alert', {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'Cooldown finished!',
+      message:
+        'The hour is up. Reload the Steam tab to continue deleting licenses.',
+      priority: 2,
+    })
+  }
+})
