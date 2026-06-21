@@ -2,6 +2,26 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 const MIN_DELAY_MS = 1000
 
+// Keywords that identify protected licenses (DLC, soundtracks, etc.)
+const PROTECTED_KEYWORDS = ['dlc', 'soundtrack', 'expansion', 'season pass']
+
+// Extract the Steam session ID from inline page scripts (Manifest V3 isolation workaround).
+// Only searches scripts without a `src` attribute (inline scripts).
+function getSteamSessionId(): string | null {
+  const scripts = document.querySelectorAll<HTMLScriptElement>('script:not([src])')
+  for (const script of scripts) {
+    const match = script.textContent?.match(/g_sessionID\s*=\s*"([^"]+)"/)
+    if (match) return match[1]
+  }
+  return null
+}
+
+// Safety heuristic: skip licenses that look like DLC, soundtracks, or other protected content
+function isProtectedLicense(elementText: string): boolean {
+  const text = elementText.toLowerCase()
+  return PROTECTED_KEYWORDS.some((keyword) => text.includes(keyword))
+}
+
 function buildLinkMap(): Map<string, HTMLAnchorElement> {
   const allRemoveLinks = document.querySelectorAll<HTMLAnchorElement>(
     'a[href^="javascript:RemoveFreeLicense"]',
@@ -64,11 +84,9 @@ function updateUI(
   const etaSeconds = remainingRealItems * avgTimePerItem + extraWaitSecs
   const etaStr = done < total ? formatTime(etaSeconds) : 'Completed'
 
-  const statusHtml = statusMsg ?? ''
-
   dashboard.innerHTML = `
     <h3 style="margin: 0 0 15px 0; color: #66c0f4; font-size: 18px; text-transform: uppercase; letter-spacing: 1px;">🧹 Steam Auto-Cleanup</h3>
-    ${statusHtml}
+    ${statusMsg}
     <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px;">
       <span><strong>Progress:</strong></span>
       <span>${done} / ${total} (${percent}%)</span>
@@ -130,10 +148,41 @@ async function removeTrashLicenses(trashPackageIds: string[]): Promise<void> {
     }
 
     const link = linkMap.get(currentPackageId)!
+
+    // Skip DLC, soundtracks and other protected licenses
+    const row = link.closest('tr')
+    if (row && isProtectedLicense(row.textContent ?? '')) {
+      updateUI(
+        dashboard,
+        processedCount,
+        totalTargets,
+        totalRealTargets,
+        realTargetsDone,
+        totalActiveDuration,
+        currentPackageId,
+        0,
+        `<div style="background: rgba(164, 208, 7, 0.1); border: 1px solid #a4d007; padding: 6px; border-radius: 4px; color: #a4d007; margin-bottom: 15px; text-align: center; font-size: 13px;">
+          🛡️ ID ${currentPackageId} looks protected (DLC/Soundtrack) &rarr; Skipped
+        </div>`,
+      )
+      continue
+    }
+
     let successStatus = false
 
+    const sessionId = getSteamSessionId()
+    if (!sessionId) {
+      dashboard.innerHTML = `
+        <h3 style="margin: 0 0 15px 0; color: #66c0f4; font-size: 18px; text-transform: uppercase; letter-spacing: 1px;">🧹 Steam Auto-Cleanup</h3>
+        <div style="background: rgba(229, 64, 34, 0.2); border: 1px solid #e54022; padding: 10px; border-radius: 4px; color: #e54022; text-align: center; font-weight: bold;">
+          ❌ Could not find Steam session ID.<br>Please reload the page and try again.
+        </div>
+      `
+      return
+    }
+
     const formData = new URLSearchParams()
-    formData.append('sessionid', (window as Window & typeof globalThis & { g_sessionID?: string }).g_sessionID ?? '')
+    formData.append('sessionid', sessionId)
     formData.append('packageid', currentPackageId)
 
     while (!successStatus) {
@@ -157,7 +206,6 @@ async function removeTrashLicenses(trashPackageIds: string[]): Promise<void> {
           if (data?.success === 1) {
             // EResult 1 = OK
             successStatus = true
-            const row = link.closest('tr')
             if (row) row.style.display = 'none'
 
             const elapsedMs = performance.now() - startTimestamp

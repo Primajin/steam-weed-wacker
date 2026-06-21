@@ -45,7 +45,7 @@ function App() {
 
     chrome.storage.local.set({ [STORAGE_KEY]: ids }, () => {
       chrome.tabs.query({ url: '*://store.steampowered.com/account/licenses/' }, (tabs) => {
-        if (tabs.length > 0 && tabs[0].id != null) {
+        if (tabs.length > 0 && tabs[0]?.id != null) {
           chrome.tabs.sendMessage(tabs[0].id, { type: 'START_CLEANUP', ids })
           setStatus(`Started cleanup for ${ids.length} ID(s). Check the Steam licenses page.`)
           window.close()
