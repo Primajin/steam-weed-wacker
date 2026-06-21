@@ -1,5 +1,3 @@
-import type {ProtectedTitlePattern} from './utils.js';
-
 export type DecisionReason =
 	| 'DELETE'
 	| 'SKIP_ALLOWLIST_ID'
@@ -14,18 +12,10 @@ export type DecisionReason =
 export type StartRemovalMessage = {
 	type: 'START_REMOVAL';
 	ids: string[];
-	protectedIds: number[];
+	protectedIds: string[];
 	protectedPatternsRaw: string[];
-	protectedPatterns: ProtectedTitlePattern[];
 	dryRun: boolean;
 };
-
-export type LegacyStartCleanupMessage = {
-	type: 'START_CLEANUP';
-	ids: string[];
-};
-
-export type RemovalMessage = StartRemovalMessage | LegacyStartCleanupMessage;
 
 export type ItemDecision = {
 	packageId: string;

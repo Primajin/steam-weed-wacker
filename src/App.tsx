@@ -1,7 +1,6 @@
 import {useState} from 'react';
 import {
 	parseProtectedIds,
-	parseProtectedTitlePatterns,
 } from './utils.js';
 import type {StartRemovalMessage} from './types.js';
 
@@ -75,7 +74,6 @@ function App() {
 		}
 
 		const protectedIds = parseProtectedIds(protectedIdsInput);
-		const protectedPatterns = parseProtectedTitlePatterns(protectedPatternsInput);
 		const protectedPatternsRaw = protectedPatternsInput
 			.split(/\r?\n/v)
 			.map(line => line.trim())
@@ -94,7 +92,6 @@ function App() {
 						ids,
 						protectedIds,
 						protectedPatternsRaw,
-						protectedPatterns,
 						dryRun: isDryRun,
 					};
 					void chrome.tabs.sendMessage(tabs[0].id, message);

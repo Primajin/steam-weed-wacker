@@ -10,10 +10,6 @@ export const DEFAULT_RETRY_AFTER_SECONDS = 60;
 /** Keywords that identify protected licenses (DLC, soundtracks, etc.). */
 export const PROTECTED_KEYWORDS = ['dlc', 'soundtrack', 'expansion', 'season pass'];
 
-export type ProtectedTitlePattern =
-	| {raw: string; type: 'contains'; value: string}
-	| {raw: string; type: 'regex'; source: string; flags: string};
-
 export type HiddenGemReviewLabelLiteral = 'very positive' | 'overwhelmingly positive';
 
 export const HIDDEN_GEM_REVIEW_LABELS: HiddenGemReviewLabelLiteral[] = ['very positive', 'overwhelmingly positive'];
@@ -53,28 +49,14 @@ export function isProtectedLicense(elementText: string): boolean {
 	return PROTECTED_KEYWORDS.some(keyword => text.includes(keyword));
 }
 
-export function parseProtectedIds(input: string): number[] {
-	const uniqueIds = new Set<number>();
-	for (const chunk of input.split(/[\s,]+/v)) {
-		const trimmed = chunk.trim();
-		if (trimmed.length === 0) {
-			continue;
-		}
-
-		if (!/^\d+$/v.test(trimmed)) {
-			continue;
-		}
-
-		const normalizedId = Number(trimmed);
-		if (Number.isSafeInteger(normalizedId) && normalizedId > 0) {
-			uniqueIds.add(normalizedId);
-		}
-	}
-
-	return [...uniqueIds].toSorted((a, b) => a - b);
+export function parseProtectedIds(input: string): string[] {
+	return input
+		.split(/[\s,]+/v)
+		.map(chunk => chunk.trim())
+		.filter(chunk => chunk.length > 0);
 }
 
-export function parseProtectedTitlePatterns(input: string): ProtectedTitlePattern[] {
+export function parseProtectedTitlePatterns(input: string): RegExp[] {
 	return input
 		.split(/\r?\n/v)
 		.map(line => line.trim())
@@ -82,41 +64,25 @@ export function parseProtectedTitlePatterns(input: string): ProtectedTitlePatter
 		.map(line => parseProtectedTitlePattern(line));
 }
 
-function parseProtectedTitlePattern(line: string): ProtectedTitlePattern {
+function parseProtectedTitlePattern(line: string): RegExp {
 	const regexMatch = /^\/(?<source>.+)\/(?<flags>[dgimsuy]*)$/v.exec(line);
 	if (regexMatch?.groups !== undefined) {
 		const {source, flags} = regexMatch.groups;
 		try {
-			void new RegExp(source, flags);
-			return {
-				raw: line,
-				type: 'regex',
-				source,
-				flags,
-			};
+			return new RegExp(source, flags || 'i');
 		} catch {
-			// Fall through to plain-text matching for invalid regex syntax.
+			console.warn(`Invalid protected title regex "${line}". Falling back to a no-match regex.`);
+			return /$a/v;
 		}
 	}
 
-	return {raw: line, type: 'contains', value: line.toLowerCase()};
+	return new RegExp(escapeRegex(line), 'i');
 }
 
-export function matchesProtectedTitlePattern(title: string, patterns: ProtectedTitlePattern[]): boolean {
-	const normalizedTitle = title.toLowerCase();
-
+export function matchesProtectedTitlePattern(title: string, patterns: RegExp[]): boolean {
 	for (const pattern of patterns) {
-		if (pattern.type === 'contains') {
-			if (normalizedTitle.includes(pattern.value)) {
-				return true;
-			}
-
-			continue;
-		}
-
 		try {
-			const regularExpression = new RegExp(pattern.source, pattern.flags);
-			if (regularExpression.test(title)) {
+			if (pattern.test(title)) {
 				return true;
 			}
 		} catch {
@@ -125,6 +91,10 @@ export function matchesProtectedTitlePattern(title: string, patterns: ProtectedT
 	}
 
 	return false;
+}
+
+function escapeRegex(value: string): string {
+	return value.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function shouldProtectHiddenGem(
