@@ -138,7 +138,7 @@ describe('parseProtectedTitlePatterns', () => {
 	});
 
 	it('returns a no-match fallback regex and warns when regex is invalid', () => {
-		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 		const [pattern] = parseProtectedTitlePatterns('/[invalid/');
 		expect(pattern?.test('/[invalid/')).toBe(false);
 		expect(warnSpy).toHaveBeenCalledOnce();

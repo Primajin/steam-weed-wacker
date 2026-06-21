@@ -525,14 +525,7 @@ async function removeTrashLicenses({
 			} else {
 				// eslint-disable-next-line no-await-in-loop
 				const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext);
-				if (hiddenGem.reason !== undefined) {
-					decision = {
-						packageId,
-						title,
-						reason: hiddenGem.reason,
-						details: hiddenGem.details,
-					};
-				} else {
+				if (hiddenGem.reason === undefined) {
 					// eslint-disable-next-line no-await-in-loop
 					const removalResult = await deletePackageWithRetry(packageId, sessionId!, dashboard, report);
 					decision = {
@@ -548,6 +541,13 @@ async function removeTrashLicenses({
 							row.style.display = 'none';
 						}
 					}
+				} else {
+					decision = {
+						packageId,
+						title,
+						reason: hiddenGem.reason,
+						details: hiddenGem.details,
+					};
 				}
 			}
 		}

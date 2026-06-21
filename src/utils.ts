@@ -69,14 +69,15 @@ function parseProtectedTitlePattern(line: string): RegExp {
 	if (regexMatch?.groups !== undefined) {
 		const {source, flags} = regexMatch.groups;
 		try {
-			return new RegExp(source, flags || 'i');
+			return new RegExp(source, flags.length > 0 ? flags : 'i');
 		} catch {
 			console.warn(`Invalid protected title regex "${line}". Falling back to a no-match regex.`);
+			// eslint-disable-next-line regexp/no-useless-assertions
 			return /$a/v;
 		}
 	}
 
-	return new RegExp(escapeRegex(line), 'i');
+	return new RegExp(escapeRegex(line), 'iv');
 }
 
 export function matchesProtectedTitlePattern(title: string, patterns: RegExp[]): boolean {
@@ -94,7 +95,13 @@ export function matchesProtectedTitlePattern(title: string, patterns: RegExp[]):
 }
 
 function escapeRegex(value: string): string {
-	return value.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const specialChars = new Set(['\\', '^', '$', '.', '|', '?', '*', '+', '(', ')', '[', ']', '{', '}']);
+	let escaped = '';
+	for (const character of value) {
+		escaped += specialChars.has(character) ? `\\${character}` : character;
+	}
+
+	return escaped;
 }
 
 export function shouldProtectHiddenGem(
