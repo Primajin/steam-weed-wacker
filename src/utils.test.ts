@@ -11,6 +11,7 @@ import {
 	getSteamSessionId,
 	PROTECTED_KEYWORDS,
 	parseProtectedIds,
+	parsePackageIds,
 	parseProtectedTitlePatterns,
 	matchesProtectedTitlePattern,
 	shouldProtectHiddenGem,
@@ -124,6 +125,28 @@ describe('parseProtectedIds', () => {
 	});
 });
 
+describe('parsePackageIds', () => {
+	it('extracts numeric IDs from plain newline-separated input', () => {
+		expect(parsePackageIds('730\n570\n440')).toEqual(['730', '570', '440']);
+	});
+
+	it('extracts numeric IDs from a JSON array string', () => {
+		expect(parsePackageIds('["20187", "20199"]')).toEqual(['20187', '20199']);
+	});
+
+	it('ignores non-numeric text and JSON punctuation', () => {
+		expect(parsePackageIds('["20187", "hello", "20199"]')).toEqual(['20187', '20199']);
+	});
+
+	it('returns an empty array for input with no digits', () => {
+		expect(parsePackageIds('abc, def')).toEqual([]);
+	});
+
+	it('handles mixed text with embedded numbers', () => {
+		expect(parsePackageIds('Package 730 and 570')).toEqual(['730', '570']);
+	});
+});
+
 describe('parseProtectedTitlePatterns', () => {
 	it('parses plain-text patterns', () => {
 		const patterns = parseProtectedTitlePatterns('Half Life\nWorld of');
@@ -143,6 +166,34 @@ describe('parseProtectedTitlePatterns', () => {
 		expect(pattern?.test('/[invalid/')).toBe(false);
 		expect(warnSpy).toHaveBeenCalledOnce();
 		warnSpy.mockRestore();
+	});
+
+	it('strips trailing commas from JSON-pasted lines', () => {
+		const [pattern] = parseProtectedTitlePatterns('"3DMark",');
+		expect(pattern?.test('3DMark')).toBe(true);
+	});
+
+	it('strips surrounding double quotes from JSON-pasted lines', () => {
+		const [pattern] = parseProtectedTitlePatterns('"Angel Legion"');
+		expect(pattern?.test('Angel Legion')).toBe(true);
+	});
+
+	it('strips surrounding single quotes from JSON-pasted lines', () => {
+		const [pattern] = parseProtectedTitlePatterns('\'Half Life\'');
+		expect(pattern?.test('Half Life 2')).toBe(true);
+	});
+
+	it('handles a multi-line JSON-pasted list', () => {
+		const patterns = parseProtectedTitlePatterns('"3DMark",\n"Angel Legion",');
+		expect(patterns).toHaveLength(2);
+		expect(patterns[0]?.test('3DMark Benchmark')).toBe(true);
+		expect(patterns[1]?.test('Angel Legion - Magic World')).toBe(true);
+	});
+
+	it('ignores empty lines after stripping artifacts', () => {
+		const patterns = parseProtectedTitlePatterns('  ,\n"3DMark",\n  ');
+		expect(patterns).toHaveLength(1);
+		expect(patterns[0]?.test('3DMark')).toBe(true);
 	});
 });
 
