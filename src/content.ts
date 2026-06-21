@@ -38,6 +38,22 @@ type MetadataContext = {
 	appMetadataCache: Map<number, HiddenGemMetadata | undefined>;
 };
 
+type SkipReason = Exclude<DecisionReason, 'DELETE' | 'ERROR'>;
+
+type PackageDetailsResponse = Record<string, {success?: boolean; data?: {apps?: Array<{id?: number}>}}>;
+type AppDetailsResponse = Record<string, {success?: boolean; data?: {is_free?: boolean; type?: string}}>;
+type AppReviewsResponse = {query_summary?: {review_score_desc?: string; total_reviews?: number}};
+
+const SKIP_REASONS: SkipReason[] = [
+	'SKIP_ALLOWLIST_ID',
+	'SKIP_ALLOWLIST_PATTERN',
+	'SKIP_PROTECTED_KEYWORD',
+	'SKIP_HIDDEN_GEM',
+	'SKIP_METADATA_UNAVAILABLE',
+	'SKIP_RATE_LIMIT',
+	'SKIP_NOT_ON_PAGE',
+];
+
 function buildLinkMap(): Map<string, HTMLAnchorElement> {
 	const allRemoveLinks = document.querySelectorAll<HTMLAnchorElement>('a[href^="javascript:RemoveFreeLicense"]');
 	const linkMap = new Map<string, HTMLAnchorElement>();
@@ -100,17 +116,7 @@ function updateUi(
 	const skippedCount = report.items.length - deletedCount - errorCount;
 	const modeLabel = report.mode === 'DRY_RUN' ? 'Dry Run (no deletions)' : 'Execute (deletions enabled)';
 
-	const reasonCounts = [
-		'SKIP_ALLOWLIST_ID',
-		'SKIP_ALLOWLIST_PATTERN',
-		'SKIP_PROTECTED_KEYWORD',
-		'SKIP_HIDDEN_GEM',
-		'SKIP_METADATA_UNAVAILABLE',
-		'SKIP_RATE_LIMIT',
-		'SKIP_NOT_ON_PAGE',
-	] satisfies DecisionReason[];
-
-	const reasonsHtml = reasonCounts
+	const reasonsHtml = SKIP_REASONS
 		.map(reason => `<li>${reason}: ${countReason(report, reason)}</li>`)
 		.join('');
 
@@ -176,7 +182,7 @@ function getAppIdFromRow(link: HTMLAnchorElement): number | undefined {
 		return undefined;
 	}
 
-	const match = /\/app\/(?<appId>\d+)/v.exec(appLink.href);
+	const match = /\/app\/(?<appId>\d+)(?:\/|$)/v.exec(appLink.href);
 	if (match?.groups?.appId === undefined) {
 		return undefined;
 	}
@@ -211,9 +217,9 @@ async function resolveAppIdForPackage(
 			return {rateLimited: false};
 		}
 
-		const payload = await response.json() as Record<string, {success?: boolean; data?: {apps?: Array<{id?: number}>}}>;
+		const payload = await response.json() as PackageDetailsResponse;
 		const appId = payload[packageId]?.data?.apps?.[0]?.id;
-		const normalizedAppId = Number.isSafeInteger(appId) && appId !== undefined && appId > 0 ? appId : undefined;
+		const normalizedAppId = appId !== undefined && Number.isSafeInteger(appId) && appId > 0 ? appId : undefined;
 		context.packageToAppCache.set(packageId, normalizedAppId);
 		return {appId: normalizedAppId, rateLimited: false};
 	} catch {
@@ -241,7 +247,7 @@ async function getHiddenGemMetadata(
 			return {rateLimited: false};
 		}
 
-		const appDetailsPayload = await appDetailsResponse.json() as Record<string, {success?: boolean; data?: {is_free?: boolean; type?: string}}>;
+		const appDetailsPayload = await appDetailsResponse.json() as AppDetailsResponse;
 		const appData = appDetailsPayload[String(appId)]?.data;
 		if (appData?.is_free !== true || appData.type !== 'game') {
 			const metadata = {
@@ -263,7 +269,7 @@ async function getHiddenGemMetadata(
 			return {rateLimited: false};
 		}
 
-		const reviewPayload = await reviewsResponse.json() as {query_summary?: {review_score_desc?: string; total_reviews?: number}};
+		const reviewPayload = await reviewsResponse.json() as AppReviewsResponse;
 		const summary = reviewPayload.query_summary;
 		const reviewScoreDescription = summary?.review_score_desc?.trim();
 		const reviewCount = summary?.total_reviews;
@@ -327,7 +333,6 @@ async function deletePackageWithRetry(
 	sessionId: string,
 	dashboard: HTMLDivElement,
 	report: ReviewReport,
-	currentId: string,
 ): Promise<{reason: DecisionReason; details?: string}> {
 	const formData = new URLSearchParams();
 	formData.append('sessionid', sessionId);
@@ -368,7 +373,7 @@ async function deletePackageWithRetry(
 						updateUi(
 							dashboard,
 							report,
-							currentId,
+							packageId,
 							`<div style="background: rgba(229, 64, 34, 0.2); border: 1px solid #e54022; padding: 8px; border-radius: 4px; color: #e54022; margin-bottom: 10px; text-align: center; font-size: 12px;">
 								🛑 Rate limit exceeded (Code 84). Waiting ${i}s before retry.
 							</div>`,
@@ -394,7 +399,7 @@ async function deletePackageWithRetry(
 					updateUi(
 						dashboard,
 						report,
-						currentId,
+						packageId,
 						`<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
 							⚠️ HTTP 429. Waiting ${i}s before retry.
 						</div>`,
@@ -515,7 +520,7 @@ async function removeTrashLicenses(request: StartRemovalMessage): Promise<void> 
 					};
 				} else {
 					// eslint-disable-next-line no-await-in-loop
-					const removalResult = await deletePackageWithRetry(packageId, sessionId!, dashboard, report, packageId);
+					const removalResult = await deletePackageWithRetry(packageId, sessionId!, dashboard, report);
 					decision = {
 						packageId,
 						title,

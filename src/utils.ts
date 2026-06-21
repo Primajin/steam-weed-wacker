@@ -14,9 +14,9 @@ export type ProtectedTitlePattern =
 	| {raw: string; type: 'contains'; value: string}
 	| {raw: string; type: 'regex'; source: string; flags: string};
 
-export type HiddenGemReviewLabel = 'very positive' | 'overwhelmingly positive';
+export type HiddenGemReviewLabelLiteral = 'very positive' | 'overwhelmingly positive';
 
-export const HIDDEN_GEM_REVIEW_LABELS: HiddenGemReviewLabel[] = ['very positive', 'overwhelmingly positive'];
+export const HIDDEN_GEM_REVIEW_LABELS: HiddenGemReviewLabelLiteral[] = ['very positive', 'overwhelmingly positive'];
 export const DEFAULT_HIDDEN_GEM_MIN_REVIEWS = 500;
 
 /**
@@ -83,7 +83,7 @@ export function parseProtectedTitlePatterns(input: string): ProtectedTitlePatter
 }
 
 function parseProtectedTitlePattern(line: string): ProtectedTitlePattern {
-	const regexMatch = /^\/(?<source>.*)\/(?<flags>[dgimsuvy]*)$/v.exec(line);
+	const regexMatch = /^\/(?<source>.+)\/(?<flags>[dgimsuy]*)$/v.exec(line);
 	if (regexMatch?.groups !== undefined) {
 		const {source, flags} = regexMatch.groups;
 		try {
@@ -138,11 +138,15 @@ export function shouldProtectHiddenGem(
 	}
 
 	const normalizedLabel = reviewScoreDescription.toLowerCase();
-	if (!HIDDEN_GEM_REVIEW_LABELS.includes(normalizedLabel as HiddenGemReviewLabel)) {
+	if (!isHiddenGemReviewLabel(normalizedLabel)) {
 		return false;
 	}
 
 	return reviewCount >= minReviews;
+}
+
+function isHiddenGemReviewLabel(value: string): value is HiddenGemReviewLabelLiteral {
+	return (HIDDEN_GEM_REVIEW_LABELS as readonly string[]).includes(value);
 }
 
 /**
