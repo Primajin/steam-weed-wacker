@@ -10,6 +10,15 @@ export const DEFAULT_RETRY_AFTER_SECONDS = 60;
 /** Keywords that identify protected licenses (DLC, soundtracks, etc.). */
 export const PROTECTED_KEYWORDS = ['dlc', 'soundtrack', 'expansion', 'season pass'];
 
+export type ProtectedTitlePattern =
+	| {raw: string; type: 'contains'; value: string}
+	| {raw: string; type: 'regex'; source: string; flags: string};
+
+export type HiddenGemReviewLabelLiteral = 'very positive' | 'overwhelmingly positive';
+
+export const HIDDEN_GEM_REVIEW_LABELS: HiddenGemReviewLabelLiteral[] = ['very positive', 'overwhelmingly positive'];
+export const DEFAULT_HIDDEN_GEM_MIN_REVIEWS = 500;
+
 /**
  Formats a number of seconds into a human-readable string, e.g. "1h 2m 3s".
  Returns "Almost Done..." for zero or negative values.
@@ -42,6 +51,102 @@ export function formatTime(totalSeconds: number): string {
 export function isProtectedLicense(elementText: string): boolean {
 	const text = elementText.toLowerCase();
 	return PROTECTED_KEYWORDS.some(keyword => text.includes(keyword));
+}
+
+export function parseProtectedIds(input: string): number[] {
+	const uniqueIds = new Set<number>();
+	for (const chunk of input.split(/[\s,]+/v)) {
+		const trimmed = chunk.trim();
+		if (trimmed.length === 0) {
+			continue;
+		}
+
+		if (!/^\d+$/v.test(trimmed)) {
+			continue;
+		}
+
+		const normalizedId = Number(trimmed);
+		if (Number.isSafeInteger(normalizedId) && normalizedId > 0) {
+			uniqueIds.add(normalizedId);
+		}
+	}
+
+	return [...uniqueIds].toSorted((a, b) => a - b);
+}
+
+export function parseProtectedTitlePatterns(input: string): ProtectedTitlePattern[] {
+	return input
+		.split(/\r?\n/v)
+		.map(line => line.trim())
+		.filter(line => line.length > 0)
+		.map(line => parseProtectedTitlePattern(line));
+}
+
+function parseProtectedTitlePattern(line: string): ProtectedTitlePattern {
+	const regexMatch = /^\/(?<source>.+)\/(?<flags>[dgimsuy]*)$/v.exec(line);
+	if (regexMatch?.groups !== undefined) {
+		const {source, flags} = regexMatch.groups;
+		try {
+			void new RegExp(source, flags);
+			return {
+				raw: line,
+				type: 'regex',
+				source,
+				flags,
+			};
+		} catch {
+			// Fall through to plain-text matching for invalid regex syntax.
+		}
+	}
+
+	return {raw: line, type: 'contains', value: line.toLowerCase()};
+}
+
+export function matchesProtectedTitlePattern(title: string, patterns: ProtectedTitlePattern[]): boolean {
+	const normalizedTitle = title.toLowerCase();
+
+	for (const pattern of patterns) {
+		if (pattern.type === 'contains') {
+			if (normalizedTitle.includes(pattern.value)) {
+				return true;
+			}
+
+			continue;
+		}
+
+		try {
+			const regularExpression = new RegExp(pattern.source, pattern.flags);
+			if (regularExpression.test(title)) {
+				return true;
+			}
+		} catch {
+			// Ignore malformed regex patterns at match-time and keep processing.
+		}
+	}
+
+	return false;
+}
+
+export function shouldProtectHiddenGem(
+	isFree: boolean,
+	reviewScoreDescription: string | undefined,
+	reviewCount: number | undefined,
+	minReviews = DEFAULT_HIDDEN_GEM_MIN_REVIEWS,
+): boolean {
+	if (!isFree || reviewScoreDescription === undefined || reviewCount === undefined) {
+		return false;
+	}
+
+	const normalizedLabel = reviewScoreDescription.toLowerCase();
+	if (!isHiddenGemReviewLabel(normalizedLabel)) {
+		return false;
+	}
+
+	return reviewCount >= minReviews;
+}
+
+function isHiddenGemReviewLabel(value: string): value is HiddenGemReviewLabelLiteral {
+	return (HIDDEN_GEM_REVIEW_LABELS as readonly string[]).includes(value);
 }
 
 /**
