@@ -4,13 +4,12 @@ import {
 	DEFAULT_RETRY_AFTER_SECONDS,
 	isProtectedLicense,
 	getSteamSessionId,
-	matchesProtectedTitlePattern,
+	parseProtectedTitlePatterns,
 	shouldProtectHiddenGem,
 } from './utils.js';
 import type {
 	DecisionReason,
 	ItemDecision,
-	RemovalMessage,
 	StartRemovalMessage,
 } from './types.js';
 
@@ -115,6 +114,11 @@ function updateUi(
 	const errorCount = countReason(report, 'ERROR');
 	const skippedCount = report.items.length - deletedCount - errorCount;
 	const modeLabel = report.mode === 'DRY_RUN' ? 'Dry Run (no deletions)' : 'Execute (deletions enabled)';
+	const dryRunBanner = report.mode === 'DRY_RUN'
+		? `<div style="background: rgba(102, 192, 244, 0.16); border: 1px solid #66c0f4; padding: 8px; border-radius: 4px; color: #66c0f4; margin-bottom: 10px; text-align: center; font-size: 12px;">
+			🧪 Dry run active — no licenses will be removed.
+		</div>`
+		: '';
 
 	const reasonsHtml = SKIP_REASONS
 		.map(reason => `<li>${reason}: ${countReason(report, reason)}</li>`)
@@ -135,6 +139,7 @@ function updateUi(
 		<div style="margin-bottom: 10px; padding: 8px; border-radius: 4px; border: 1px solid #2a475e; background: rgba(102, 192, 244, 0.12); font-size: 13px;">
 			<strong>Mode:</strong> ${modeLabel}
 		</div>
+		${dryRunBanner}
 		${statusMessage}
 		<div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px;">
 			<span><strong>Progress</strong></span>
@@ -420,9 +425,15 @@ async function deletePackageWithRetry(
 	}
 }
 
-async function removeTrashLicenses(request: StartRemovalMessage): Promise<void> {
-	const protectedIdSet = new Set(request.protectedIds.map(String));
-	const targets = [...new Set(request.ids.map(id => id.trim()).filter(id => id.length > 0))];
+async function removeTrashLicenses({
+	ids,
+	protectedIds,
+	protectedPatternsRaw,
+	dryRun,
+}: Omit<StartRemovalMessage, 'type'>): Promise<void> {
+	const protectedIdSet = new Set(protectedIds.map(id => id.trim()).filter(id => id.length > 0));
+	const protectedTitlePatterns = parseProtectedTitlePatterns(protectedPatternsRaw.join('\n'));
+	const targets = [...new Set(ids.map(id => id.trim()).filter(id => id.length > 0))];
 
 	if (targets.length === 0) {
 		// eslint-disable-next-line no-alert
@@ -432,7 +443,7 @@ async function removeTrashLicenses(request: StartRemovalMessage): Promise<void> 
 
 	const linkMap = buildLinkMap();
 	const report: ReviewReport = {
-		mode: request.dryRun ? 'DRY_RUN' : 'EXECUTE',
+		mode: dryRun ? 'DRY_RUN' : 'EXECUTE',
 		totalCandidates: targets.length,
 		processed: 0,
 		items: [],
@@ -446,8 +457,8 @@ async function removeTrashLicenses(request: StartRemovalMessage): Promise<void> 
 		appMetadataCache: new Map(),
 	};
 
-	const sessionId = request.dryRun ? undefined : getSteamSessionId();
-	if (!request.dryRun && sessionId === undefined) {
+	const sessionId = dryRun ? undefined : getSteamSessionId();
+	if (!dryRun && sessionId === undefined) {
 		for (const packageId of targets) {
 			report.items.push({
 				packageId,
@@ -469,56 +480,52 @@ async function removeTrashLicenses(request: StartRemovalMessage): Promise<void> 
 	for (const packageId of targets) {
 		const link = linkMap.get(packageId);
 		const title = link === undefined ? `Package ${packageId}` : extractTitle(link, packageId);
+		const rowText = link?.closest('tr')?.textContent ?? '';
 
 		let decision: ItemDecision;
-		if (link === undefined) {
-			decision = {
-				packageId,
-				title,
-				reason: 'SKIP_NOT_ON_PAGE',
-				details: 'Package ID is not currently listed on this page.',
-			};
-		} else if (protectedIdSet.has(packageId)) {
+		if (protectedIdSet.has(packageId)) {
 			decision = {
 				packageId,
 				title,
 				reason: 'SKIP_ALLOWLIST_ID',
-				details: 'Protected by explicit ID allowlist.',
+				details: 'Skipped: package is explicitly protected.',
 			};
-		} else if (matchesProtectedTitlePattern(title, request.protectedPatterns)) {
+		} else if (link === undefined) {
 			decision = {
 				packageId,
 				title,
-				reason: 'SKIP_ALLOWLIST_PATTERN',
-				details: 'Title matched a protected pattern.',
+				reason: 'SKIP_NOT_ON_PAGE',
+				details: 'Skipped: package ID is not currently listed on this page.',
+			};
+		} else if (isProtectedLicense(rowText)) {
+			decision = {
+				packageId,
+				title,
+				reason: 'SKIP_PROTECTED_KEYWORD',
+				details: 'Skipped: matched built-in DLC/soundtrack/expansion safeguards.',
 			};
 		} else {
-			const rowText = link.closest('tr')?.textContent ?? '';
-			if (isProtectedLicense(rowText)) {
+			const matchingPattern = protectedTitlePatterns.find(pattern => pattern.test(rowText));
+			if (matchingPattern !== undefined) {
 				decision = {
 					packageId,
 					title,
-					reason: 'SKIP_PROTECTED_KEYWORD',
-					details: 'Matched built-in DLC/soundtrack/expansion safeguards.',
+					reason: 'SKIP_ALLOWLIST_PATTERN',
+					details: `Skipped: matched protected title pattern "${matchingPattern.source}".`,
+				};
+			} else if (dryRun) {
+				// eslint-disable-next-line no-await-in-loop
+				await sleep(300);
+				decision = {
+					packageId,
+					title,
+					reason: 'DELETE',
+					details: 'Dry run: would send delete request.',
 				};
 			} else {
 				// eslint-disable-next-line no-await-in-loop
 				const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext);
-				if (hiddenGem.reason !== undefined) {
-					decision = {
-						packageId,
-						title,
-						reason: hiddenGem.reason,
-						details: hiddenGem.details,
-					};
-				} else if (request.dryRun) {
-					decision = {
-						packageId,
-						title,
-						reason: 'DELETE',
-						details: 'Dry run: would send delete request.',
-					};
-				} else {
+				if (hiddenGem.reason === undefined) {
 					// eslint-disable-next-line no-await-in-loop
 					const removalResult = await deletePackageWithRetry(packageId, sessionId!, dashboard, report);
 					decision = {
@@ -534,6 +541,13 @@ async function removeTrashLicenses(request: StartRemovalMessage): Promise<void> 
 							row.style.display = 'none';
 						}
 					}
+				} else {
+					decision = {
+						packageId,
+						title,
+						reason: hiddenGem.reason,
+						details: hiddenGem.details,
+					};
 				}
 			}
 		}
@@ -548,26 +562,14 @@ async function removeTrashLicenses(request: StartRemovalMessage): Promise<void> 
 		report,
 		undefined,
 		`<div style="background: rgba(164, 208, 7, 0.1); border: 1px solid #a4d007; padding: 8px; border-radius: 4px; color: #a4d007; margin-bottom: 10px; text-align: center; font-size: 12px;">
-			✅ ${request.dryRun ? 'Dry run complete' : 'Cleanup complete'}.
+			✅ ${dryRun ? 'Dry run complete' : 'Cleanup complete'}.
 		</div>`,
 	);
 }
 
 // Listen for messages from the popup to start the cleanup
-chrome.runtime.onMessage.addListener((request: RemovalMessage) => {
-	if (request.type === 'START_REMOVAL') {
+chrome.runtime.onMessage.addListener((request: StartRemovalMessage) => {
+	if (request.type === 'START_REMOVAL' && Array.isArray(request.ids)) {
 		void removeTrashLicenses(request);
-		return;
-	}
-
-	if (request.type === 'START_CLEANUP') {
-		void removeTrashLicenses({
-			type: 'START_REMOVAL',
-			ids: request.ids,
-			protectedIds: [],
-			protectedPatternsRaw: [],
-			protectedPatterns: [],
-			dryRun: false,
-		});
 	}
 });

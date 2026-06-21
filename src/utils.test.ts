@@ -3,6 +3,7 @@ import {
 	it,
 	expect,
 	beforeEach,
+	vi,
 } from 'vitest';
 import {
 	formatTime,
@@ -115,37 +116,33 @@ describe('getSteamSessionId', () => {
 
 describe('parseProtectedIds', () => {
 	it('parses comma/newline/space separated IDs', () => {
-		expect(parseProtectedIds('730, 570\n440 570')).toEqual([440, 570, 730]);
+		expect(parseProtectedIds('730, 570\n440 570')).toEqual(['730', '570', '440', '570']);
 	});
 
-	it('drops invalid, negative and zero values', () => {
-		expect(parseProtectedIds('abc, -1, 0, 42')).toEqual([42]);
+	it('drops empty values', () => {
+		expect(parseProtectedIds('abc,   , \n -1, 0, 42')).toEqual(['abc', '-1', '0', '42']);
 	});
 });
 
 describe('parseProtectedTitlePatterns', () => {
 	it('parses plain-text patterns', () => {
-		expect(parseProtectedTitlePatterns('Half Life\nWorld of')).toEqual([
-			{raw: 'Half Life', type: 'contains', value: 'half life'},
-			{raw: 'World of', type: 'contains', value: 'world of'},
-		]);
+		const patterns = parseProtectedTitlePatterns('Half Life\nWorld of');
+		expect(patterns[0]?.test('half life 2')).toBe(true);
+		expect(patterns[1]?.test('the world of tanks')).toBe(true);
 	});
 
 	it('parses regex syntax and preserves flags', () => {
-		expect(parseProtectedTitlePatterns('/^World of/i')).toEqual([
-			{
-				raw: '/^World of/i',
-				type: 'regex',
-				source: '^World of',
-				flags: 'i',
-			},
-		]);
+		const [pattern] = parseProtectedTitlePatterns('/^World of/i');
+		expect(pattern?.test('World of Tanks')).toBe(true);
+		expect(pattern?.test('The World of Tanks')).toBe(false);
 	});
 
-	it('falls back to contains when regex is invalid', () => {
-		expect(parseProtectedTitlePatterns('/[invalid/')).toEqual([
-			{raw: '/[invalid/', type: 'contains', value: '/[invalid/'},
-		]);
+	it('returns a no-match fallback regex and warns when regex is invalid', () => {
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+		const [pattern] = parseProtectedTitlePatterns('/[invalid/');
+		expect(pattern?.test('/[invalid/')).toBe(false);
+		expect(warnSpy).toHaveBeenCalledOnce();
+		warnSpy.mockRestore();
 	});
 });
 
