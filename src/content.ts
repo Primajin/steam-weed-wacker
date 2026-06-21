@@ -2,6 +2,11 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 const MIN_DELAY_MS = 1000
 
+// Must stay in sync with the `delayInMinutes` value in background.ts
+const RATE_LIMIT_COOLDOWN_SECONDS = 3600
+
+const DEFAULT_RETRY_AFTER_SECONDS = 60
+
 // Keywords that identify protected licenses (DLC, soundtracks, etc.)
 const PROTECTED_KEYWORDS = ['dlc', 'soundtrack', 'expansion', 'season pass']
 
@@ -230,14 +235,13 @@ async function removeTrashLicenses(trashPackageIds: string[]): Promise<void> {
             )
           } else if (data?.success === 84) {
             // EResult 84 = Rate Limit Exceeded
-            const waitTimeSecs = 3600
             console.warn(
               `🛑 Rate limit exceeded (EResult 84) for ID ${currentPackageId}! Pausing for 1 hour.`,
             )
 
             chrome.runtime.sendMessage({ type: 'NOTIFY_BAN' })
 
-            for (let i = waitTimeSecs; i > 0; i--) {
+            for (let i = RATE_LIMIT_COOLDOWN_SECONDS; i > 0; i--) {
               updateUI(
                 dashboard,
                 processedCount - 1,
@@ -274,7 +278,7 @@ async function removeTrashLicenses(trashPackageIds: string[]): Promise<void> {
           // Classic edge rate limit
           const retryAfterHeader = response.headers.get('Retry-After')
           let waitTime = parseInt(retryAfterHeader ?? '', 10)
-          if (isNaN(waitTime) || waitTime <= 0) waitTime = 60
+          if (isNaN(waitTime) || waitTime <= 0) waitTime = DEFAULT_RETRY_AFTER_SECONDS
 
           for (let i = waitTime; i > 0; i--) {
             updateUI(
