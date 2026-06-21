@@ -17,7 +17,7 @@ import type {
 
 const METADATA_TIMEOUT_MS = 5000;
 
-const ITEM_ROW_HEIGHT = 58; // Approximate height (px) of each per-item decision row
+const ITEM_ROW_HEIGHT = 58; // Fixed height (px) of each per-item decision row
 const VIRTUAL_LIST_HEIGHT = 180; // Max-height (px) of the scrollable list container
 const VIRTUAL_BUFFER = 2; // Extra rows to render above and below the visible window
 
@@ -203,8 +203,16 @@ function updateUi(
 	renderVisibleItems(0);
 
 	if (scrollContainer !== null) {
+		let rafId: number | undefined;
 		scrollContainer.addEventListener('scroll', () => {
-			renderVisibleItems(scrollContainer.scrollTop);
+			if (rafId !== undefined) {
+				cancelAnimationFrame(rafId);
+			}
+
+			rafId = requestAnimationFrame(() => {
+				rafId = undefined;
+				renderVisibleItems(scrollContainer.scrollTop);
+			});
 		});
 	}
 }
