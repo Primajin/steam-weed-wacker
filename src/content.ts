@@ -9,11 +9,17 @@ import {
 } from './utils.js';
 import type {
 	DecisionReason,
+	GetPageIdsMessage,
+	GetPageIdsResponse,
 	ItemDecision,
 	StartRemovalMessage,
 } from './types.js';
 
 const METADATA_TIMEOUT_MS = 5000;
+
+const CACHE_PKG_TO_APP_KEY = 'cache_package_to_app';
+const CACHE_APP_METADATA_KEY = 'cache_app_metadata';
+const PYTHON_PEARLS_STORAGE_KEY = 'pythonImportedPearls';
 
 const sleep = async (ms: number) => new Promise<void>(resolve => {
 	setTimeout(resolve, ms);
@@ -425,6 +431,30 @@ async function deletePackageWithRetry(
 	}
 }
 
+async function loadPersistentContext(): Promise<MetadataContext> {
+	return new Promise(resolve => {
+		chrome.storage.local.get([CACHE_PKG_TO_APP_KEY, CACHE_APP_METADATA_KEY], result => {
+			const pkgToAppRaw = (result[CACHE_PKG_TO_APP_KEY] ?? {}) as Record<string, number | undefined>;
+			const appMetaRaw = (result[CACHE_APP_METADATA_KEY] ?? {}) as Record<string, HiddenGemMetadata | undefined>;
+
+			const packageToAppCache = new Map<string, number | undefined>(Object.entries(pkgToAppRaw));
+			const appMetadataCache = new Map<number, HiddenGemMetadata | undefined>(Object.entries(appMetaRaw).map(([k, v]) => [Number(k), v]));
+
+			resolve({packageToAppCache, appMetadataCache});
+		});
+	});
+}
+
+async function savePersistentContext(context: MetadataContext): Promise<void> {
+	const pkgToAppRaw = Object.fromEntries(context.packageToAppCache);
+	const appMetaRaw = Object.fromEntries(context.appMetadataCache);
+
+	await chrome.storage.local.set({
+		[CACHE_PKG_TO_APP_KEY]: pkgToAppRaw,
+		[CACHE_APP_METADATA_KEY]: appMetaRaw,
+	});
+}
+
 async function removeTrashLicenses({
 	ids,
 	protectedIds,
@@ -452,10 +482,16 @@ async function removeTrashLicenses({
 	const dashboard = createDashboard();
 	updateUi(dashboard, report, undefined);
 
-	const metadataContext: MetadataContext = {
-		packageToAppCache: new Map(),
-		appMetadataCache: new Map(),
-	};
+	// Load persistent caches from storage instead of starting with empty Maps
+	const metadataContext = await loadPersistentContext();
+
+	// Load Python-imported pearls (protected IDs from python script analysis)
+	const storageData = await new Promise<Record<string, unknown>>(resolve => {
+		chrome.storage.local.get([PYTHON_PEARLS_STORAGE_KEY], result => {
+			resolve(result);
+		});
+	});
+	const pythonPearls = new Set<string>(storageData[PYTHON_PEARLS_STORAGE_KEY] as string[] | undefined);
 
 	const sessionId = dryRun ? undefined : getSteamSessionId();
 	if (!dryRun && sessionId === undefined) {
@@ -504,28 +540,41 @@ async function removeTrashLicenses({
 				reason: 'SKIP_PROTECTED_KEYWORD',
 				details: 'Skipped: matched built-in DLC/soundtrack/expansion safeguards.',
 			};
+		} else if (pythonPearls.has(packageId)) {
+			// Python-script pre-analysis identified this as a keeper
+			decision = {
+				packageId,
+				title,
+				reason: 'SKIP_HIDDEN_GEM',
+				details: 'Protected by Python import (pre-analysed pearl).',
+			};
 		} else {
 			const matchingPattern = protectedTitlePatterns.find(pattern => pattern.test(rowText));
-			if (matchingPattern !== undefined) {
-				decision = {
-					packageId,
-					title,
-					reason: 'SKIP_ALLOWLIST_PATTERN',
-					details: `Skipped: matched protected title pattern "${matchingPattern.source}".`,
-				};
-			} else if (dryRun) {
-				// eslint-disable-next-line no-await-in-loop
-				await sleep(300);
-				decision = {
-					packageId,
-					title,
-					reason: 'DELETE',
-					details: 'Dry run: would send delete request.',
-				};
-			} else {
+			if (matchingPattern === undefined) {
+				// Always evaluate hidden gem protection first, regardless of dry run mode,
+				// so the dashboard shows which titles would be protected by metadata checks.
 				// eslint-disable-next-line no-await-in-loop
 				const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext);
-				if (hiddenGem.reason === undefined) {
+
+				// Persist the updated caches after each metadata evaluation
+				// eslint-disable-next-line no-await-in-loop
+				await savePersistentContext(metadataContext);
+
+				if (hiddenGem.reason !== undefined) {
+					decision = {
+						packageId,
+						title,
+						reason: hiddenGem.reason,
+						details: hiddenGem.details,
+					};
+				} else if (dryRun) {
+					decision = {
+						packageId,
+						title,
+						reason: 'DELETE',
+						details: 'Dry run: would send delete request.',
+					};
+				} else {
 					// eslint-disable-next-line no-await-in-loop
 					const removalResult = await deletePackageWithRetry(packageId, sessionId!, dashboard, report);
 					decision = {
@@ -541,14 +590,14 @@ async function removeTrashLicenses({
 							row.style.display = 'none';
 						}
 					}
-				} else {
-					decision = {
-						packageId,
-						title,
-						reason: hiddenGem.reason,
-						details: hiddenGem.details,
-					};
 				}
+			} else {
+				decision = {
+					packageId,
+					title,
+					reason: 'SKIP_ALLOWLIST_PATTERN',
+					details: `Skipped: matched protected title pattern "${matchingPattern.source}".`,
+				};
 			}
 		}
 
@@ -572,4 +621,14 @@ chrome.runtime.onMessage.addListener((request: StartRemovalMessage) => {
 	if (request.type === 'START_REMOVAL' && Array.isArray(request.ids)) {
 		void removeTrashLicenses(request);
 	}
+});
+
+// Listen for requests to extract all package IDs currently on the page
+chrome.runtime.onMessage.addListener((request: GetPageIdsMessage, _sender, sendResponse: (response: GetPageIdsResponse) => void) => {
+	if (request.type !== 'GET_PAGE_IDS') {
+		return;
+	}
+
+	const ids = buildLinkMap().keys().toArray();
+	sendResponse({ids});
 });

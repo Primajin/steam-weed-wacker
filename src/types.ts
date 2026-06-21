@@ -17,6 +17,14 @@ export type StartRemovalMessage = {
 	dryRun: boolean;
 };
 
+export type GetPageIdsMessage = {
+	type: 'GET_PAGE_IDS';
+};
+
+export type GetPageIdsResponse = {
+	ids: string[];
+};
+
 export type ItemDecision = {
 	packageId: string;
 	title: string;
