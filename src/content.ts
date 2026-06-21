@@ -206,36 +206,45 @@ async function resolveAppIdForPackage(
 	packageId: string,
 	link: HTMLAnchorElement,
 	context: MetadataContext,
-): Promise<{appId?: number; rateLimited: boolean}> {
+): Promise<{appId?: number; rateLimited: boolean; successFalse: boolean}> {
 	if (context.packageToAppCache.has(packageId)) {
-		return {appId: context.packageToAppCache.get(packageId), rateLimited: false};
+		const cached = context.packageToAppCache.get(packageId);
+		return {appId: cached, rateLimited: false, successFalse: cached === undefined};
 	}
 
 	const appIdFromRow = getAppIdFromRow(link);
 	if (appIdFromRow !== undefined) {
 		context.packageToAppCache.set(packageId, appIdFromRow);
-		return {appId: appIdFromRow, rateLimited: false};
+		return {appId: appIdFromRow, rateLimited: false, successFalse: false};
 	}
 
 	try {
 		const response = await fetchJsonWithTimeout(`https://store.steampowered.com/api/packagedetails?packageids=${packageId}`);
 		if (response.status === 429) {
-			return {rateLimited: true};
+			return {rateLimited: true, successFalse: false};
 		}
 
 		if (!response.ok) {
 			context.packageToAppCache.set(packageId, undefined);
-			return {rateLimited: false};
+			return {rateLimited: false, successFalse: true};
 		}
 
 		const payload = await response.json() as PackageDetailsResponse;
+
+		// Steam explicitly says this package no longer exists in the store
+		if (payload[packageId]?.success === false) {
+			context.packageToAppCache.set(packageId, undefined);
+			return {rateLimited: false, successFalse: true};
+		}
+
 		const appId = payload[packageId]?.data?.apps?.[0]?.id;
 		const normalizedAppId = appId !== undefined && Number.isSafeInteger(appId) && appId > 0 ? appId : undefined;
 		context.packageToAppCache.set(packageId, normalizedAppId);
-		return {appId: normalizedAppId, rateLimited: false};
+		// Package exists in Steam (success:true) but has no linked app; not a dead licence
+		return {appId: normalizedAppId, rateLimited: false, successFalse: false};
 	} catch {
 		context.packageToAppCache.set(packageId, undefined);
-		return {rateLimited: false};
+		return {rateLimited: false, successFalse: true};
 	}
 }
 
@@ -312,8 +321,10 @@ async function evaluateHiddenGemProtection(
 		return {reason: 'SKIP_RATE_LIMIT', details: 'Store metadata endpoint is rate-limited.'};
 	}
 
-	if (appResolution.appId === undefined) {
-		return {reason: 'SKIP_METADATA_UNAVAILABLE', details: 'Could not map package to app metadata safely.'};
+	// Dead/removed packages (Steam returned success:false) cannot be hidden gems —
+	// they have no active store presence to protect, so allow deletion.
+	if (appResolution.successFalse || appResolution.appId === undefined) {
+		return {};
 	}
 
 	const metadataResult = await getHiddenGemMetadata(appResolution.appId, context);
@@ -323,6 +334,10 @@ async function evaluateHiddenGemProtection(
 
 	if (metadataResult.metadata === undefined) {
 		return {reason: 'SKIP_METADATA_UNAVAILABLE', details: 'Missing review metadata (fail-safe skip).'};
+	}
+
+	if (metadataResult.metadata.reviewCount === 0) {
+		return {};
 	}
 
 	if (shouldProtectHiddenGem(
