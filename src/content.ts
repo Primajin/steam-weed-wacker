@@ -65,6 +65,26 @@ const SKIP_REASONS: SkipReason[] = [
 	'SKIP_ZOMBIE',
 ];
 
+const ACCOUNT_TABLE_ROW_HEIGHT_PX = 47; // Estimated height (px) of each .accountTable row
+
+function injectPerformanceStyles(): void {
+	if (document.getElementById('sww-performance-styles') !== null) {
+		return;
+	}
+
+	const style = document.createElement('style');
+	style.id = 'sww-performance-styles';
+	// content-visibility requires a block-level element; <table> has display: table which
+	// establishes a formatting context and satisfies the containment requirement.
+	style.textContent = `
+		.accountTable {
+			content-visibility: auto;
+			contain-intrinsic-size: 0 ${ACCOUNT_TABLE_ROW_HEIGHT_PX}px;
+		}
+	`;
+	document.head.append(style);
+}
+
 function buildLinkMap(): Map<string, HTMLAnchorElement> {
 	const allRemoveLinks = document.querySelectorAll<HTMLAnchorElement>('a[href^="javascript:RemoveFreeLicense"]');
 	const linkMap = new Map<string, HTMLAnchorElement>();
@@ -527,6 +547,8 @@ async function removeTrashLicenses({
 	protectedPatternsRaw,
 	dryRun,
 }: Omit<StartRemovalMessage, 'type'>): Promise<void> {
+	injectPerformanceStyles();
+
 	const protectedIdSet = new Set(protectedIds.map(id => id.trim()).filter(id => id.length > 0));
 	const protectedTitlePatterns = parseProtectedTitlePatterns(protectedPatternsRaw.join('\n'));
 	const targets = [...new Set(ids.map(id => id.trim()).filter(id => id.length > 0))];
