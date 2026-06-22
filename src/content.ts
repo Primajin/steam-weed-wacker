@@ -219,7 +219,11 @@ function updateUi(
 	const totalItems = report.items.length;
 
 	dashboard.innerHTML = `
-		<h3 style="margin: 0 0 10px 0; color: #66c0f4; font-size: 18px; text-transform: uppercase; letter-spacing: 1px;">🧹 Steam Auto-Cleanup</h3>
+		<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+			<h3 style="margin: 0; color: #66c0f4; font-size: 18px; text-transform: uppercase; letter-spacing: 1px;">🧹 Steam Auto-Cleanup</h3>
+			<button id="sww-stop-btn" style="background: rgba(229,64,34,0.2); border: 1px solid #e54022;
+				color: #e54022; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;">Stop</button>
+		</div>
 		<div style="margin-bottom: 10px; padding: 8px; border-radius: 4px; border: 1px solid #2a475e; background: rgba(102, 192, 244, 0.12); font-size: 13px;">
 			<strong>Mode:</strong> ${modeLabel}
 		</div>
@@ -255,6 +259,10 @@ function updateUi(
 			</div>
 		</div>
 	`;
+
+	dashboard.querySelector<HTMLButtonElement>('#sww-stop-btn')?.addEventListener('click', () => {
+		isStopRequested = true;
+	});
 
 	const scrollContainer = dashboard.querySelector<HTMLDivElement>('#sww-virtual-scroll');
 	const listElement = dashboard.querySelector<HTMLUListElement>('#sww-virtual-list');
@@ -743,7 +751,13 @@ async function removeTrashLicenses({
 		return;
 	}
 
+	let didStop = false;
 	for (const packageId of targets) {
+		if (isStopRequested) {
+			didStop = true;
+			break;
+		}
+
 		const link = linkMap.get(packageId);
 		const title = link === undefined ? `Package ${packageId}` : extractTitle(link, packageId);
 		const rowText = link?.closest('tr')?.textContent ?? '';
@@ -866,18 +880,35 @@ async function removeTrashLicenses({
 		dashboard,
 		report,
 		undefined,
-		`<div style="background: rgba(164, 208, 7, 0.1); border: 1px solid #a4d007; padding: 8px; border-radius: 4px; color: #a4d007; margin-bottom: 10px; text-align: center; font-size: 12px;">
-			✅ ${dryRun ? 'Dry run complete' : 'Cleanup complete'}.
-		</div>`,
+		didStop
+			? `<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
+				⏹ Stopped by user.
+			</div>`
+			: `<div style="background: rgba(164, 208, 7, 0.1); border: 1px solid #a4d007; padding: 8px; border-radius: 4px; color: #a4d007; margin-bottom: 10px; text-align: center; font-size: 12px;">
+				✅ ${dryRun ? 'Dry run complete' : 'Cleanup complete'}.
+			</div>`,
 	);
 }
+
+let isRunning = false;
+let isStopRequested = false;
 
 function registerMessageListeners(): void {
 	// Listen for messages from the popup to start the cleanup
 	chrome.runtime.onMessage.addListener((request: StartRemovalMessage) => {
-		if (request.type === 'START_REMOVAL' && Array.isArray(request.ids)) {
-			void removeTrashLicenses(request);
+		if (request.type !== 'START_REMOVAL' || !Array.isArray(request.ids)) {
+			return;
 		}
+
+		if (isRunning) {
+			return;
+		}
+
+		isRunning = true;
+		isStopRequested = false;
+		void removeTrashLicenses(request).finally(() => {
+			isRunning = false;
+		});
 	});
 
 	// Listen for requests to extract all package IDs currently on the page
