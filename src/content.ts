@@ -24,6 +24,7 @@ const VIRTUAL_BUFFER = 2; // Extra rows to render above and below the visible wi
 const CACHE_PKG_TO_APP_KEY = 'cache_package_to_app';
 const CACHE_APP_METADATA_KEY = 'cache_app_metadata';
 const PYTHON_PEARLS_STORAGE_KEY = 'pythonImportedPearls';
+const CACHE_ATTEMPTED_DELETIONS_KEY = 'sww_attempted_deletions';
 
 const sleep = async (ms: number) => new Promise<void>(resolve => {
 	setTimeout(resolve, ms);
@@ -61,6 +62,7 @@ const SKIP_REASONS: SkipReason[] = [
 	'SKIP_METADATA_UNAVAILABLE',
 	'SKIP_RATE_LIMIT',
 	'SKIP_NOT_ON_PAGE',
+	'SKIP_ZOMBIE',
 ];
 
 function buildLinkMap(): Map<string, HTMLAnchorElement> {
@@ -549,13 +551,14 @@ async function removeTrashLicenses({
 	// Load persistent caches from storage instead of starting with empty Maps
 	const metadataContext = await loadPersistentContext();
 
-	// Load Python-imported pearls (protected IDs from python script analysis)
+	// Load Python-imported pearls (protected IDs from python script analysis) and zombie history
 	const storageData = await new Promise<Record<string, unknown>>(resolve => {
-		chrome.storage.local.get([PYTHON_PEARLS_STORAGE_KEY], result => {
+		chrome.storage.local.get([PYTHON_PEARLS_STORAGE_KEY, CACHE_ATTEMPTED_DELETIONS_KEY], result => {
 			resolve(result);
 		});
 	});
 	const pythonPearls = new Set<string>(storageData[PYTHON_PEARLS_STORAGE_KEY] as string[] | undefined);
+	const attemptedDeletions = new Set<string>(storageData[CACHE_ATTEMPTED_DELETIONS_KEY] as string[] | undefined);
 
 	const sessionId = dryRun ? undefined : getSteamSessionId();
 	if (!dryRun && sessionId === undefined) {
@@ -596,6 +599,15 @@ async function removeTrashLicenses({
 				title,
 				reason: 'SKIP_NOT_ON_PAGE',
 				details: 'Skipped: package ID is not currently listed on this page.',
+			};
+		} else if (attemptedDeletions.has(packageId)) {
+			// Zombie detected: Steam previously confirmed deletion (success: 1) but the licence is still present.
+			// Steam silently rejects the deletion in its database; we must never retry to avoid burning rate-limit attempts.
+			decision = {
+				packageId,
+				title,
+				reason: 'SKIP_ZOMBIE',
+				details: '🧟 Zombie licence: Steam silently blocked deletion. Permanently ignored.',
 			};
 		} else if (isProtectedLicense(rowText)) {
 			decision = {
@@ -653,6 +665,14 @@ async function removeTrashLicenses({
 						if (row !== null) {
 							row.style.display = 'none';
 						}
+
+						// Record the deletion attempt so that if the licence reappears on the
+						// next run (zombie), we can detect it and stop wasting rate-limit tokens.
+						attemptedDeletions.add(packageId);
+						// eslint-disable-next-line no-await-in-loop
+						await chrome.storage.local.set({
+							[CACHE_ATTEMPTED_DELETIONS_KEY]: [...attemptedDeletions],
+						});
 					}
 				}
 			} else {

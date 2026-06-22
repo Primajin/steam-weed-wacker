@@ -7,6 +7,7 @@ export type DecisionReason =
 	| 'SKIP_METADATA_UNAVAILABLE'
 	| 'SKIP_RATE_LIMIT'
 	| 'SKIP_NOT_ON_PAGE'
+	| 'SKIP_ZOMBIE'
 	| 'ERROR';
 
 export type StartRemovalMessage = {
