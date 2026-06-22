@@ -65,7 +65,27 @@ const SKIP_REASONS: SkipReason[] = [
 	'SKIP_ZOMBIE',
 ];
 
-function buildLinkMap(): Map<string, HTMLAnchorElement> {
+export const ACCOUNT_TABLE_ROW_HEIGHT_PX = 47; // Estimated height (px) of each .accountTable row
+
+export function injectPerformanceStyles(): void {
+	if (document.querySelector('#sww-performance-styles') !== null) {
+		return;
+	}
+
+	const style = document.createElement('style');
+	style.id = 'sww-performance-styles';
+	// Content-visibility requires a block-level element; <table> has display: table which
+	// establishes a formatting context and satisfies the containment requirement.
+	style.textContent = `
+		.accountTable {
+			content-visibility: auto;
+			contain-intrinsic-size: 0 ${ACCOUNT_TABLE_ROW_HEIGHT_PX}px;
+		}
+	`;
+	document.head.append(style);
+}
+
+export function buildLinkMap(): Map<string, HTMLAnchorElement> {
 	const allRemoveLinks = document.querySelectorAll<HTMLAnchorElement>('a[href^="javascript:RemoveFreeLicense"]');
 	const linkMap = new Map<string, HTMLAnchorElement>();
 
@@ -94,7 +114,7 @@ function createDashboard(): HTMLDivElement {
 	return dashboard;
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
 	return value
 		.replaceAll('&', '&amp;')
 		.replaceAll('<', '&lt;')
@@ -103,7 +123,7 @@ function escapeHtml(value: string): string {
 		.replaceAll('\'', '&#39;');
 }
 
-function extractTitle(link: HTMLAnchorElement, packageId: string): string {
+export function extractTitle(link: HTMLAnchorElement, packageId: string): string {
 	const row = link.closest('tr');
 	const text = row?.querySelector('td')?.textContent?.trim() ?? row?.textContent?.trim() ?? '';
 	return text.length > 0 ? text : `Package ${packageId}`;
@@ -527,6 +547,8 @@ async function removeTrashLicenses({
 	protectedPatternsRaw,
 	dryRun,
 }: Omit<StartRemovalMessage, 'type'>): Promise<void> {
+	injectPerformanceStyles();
+
 	const protectedIdSet = new Set(protectedIds.map(id => id.trim()).filter(id => id.length > 0));
 	const protectedTitlePatterns = parseProtectedTitlePatterns(protectedPatternsRaw.join('\n'));
 	const targets = [...new Set(ids.map(id => id.trim()).filter(id => id.length > 0))];
@@ -700,19 +722,24 @@ async function removeTrashLicenses({
 	);
 }
 
-// Listen for messages from the popup to start the cleanup
-chrome.runtime.onMessage.addListener((request: StartRemovalMessage) => {
-	if (request.type === 'START_REMOVAL' && Array.isArray(request.ids)) {
-		void removeTrashLicenses(request);
-	}
-});
+function registerMessageListeners(): void {
+	// Listen for messages from the popup to start the cleanup
+	chrome.runtime.onMessage.addListener((request: StartRemovalMessage) => {
+		if (request.type === 'START_REMOVAL' && Array.isArray(request.ids)) {
+			void removeTrashLicenses(request);
+		}
+	});
 
-// Listen for requests to extract all package IDs currently on the page
-chrome.runtime.onMessage.addListener((request: GetPageIdsMessage, _sender, sendResponse: (response: GetPageIdsResponse) => void) => {
-	if (request.type !== 'GET_PAGE_IDS') {
-		return;
-	}
+	// Listen for requests to extract all package IDs currently on the page
+	chrome.runtime.onMessage.addListener((request: GetPageIdsMessage, _sender, sendResponse: (response: GetPageIdsResponse) => void) => {
+		if (request.type !== 'GET_PAGE_IDS') {
+			return;
+		}
 
-	const ids = buildLinkMap().keys().toArray();
-	sendResponse({ids});
-});
+		const ids = buildLinkMap().keys().toArray();
+		sendResponse({ids});
+	});
+}
+
+// eslint-disable-next-line unicorn/no-top-level-side-effects
+registerMessageListeners();
