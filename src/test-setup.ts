@@ -12,6 +12,19 @@ vi.stubGlobal('chrome', {
 		local: {
 			get: vi.fn(),
 			set: vi.fn(),
+			remove: vi.fn(),
 		},
+	},
+	tabs: {
+		query: vi.fn(),
+		sendMessage: vi.fn(),
+		create: vi.fn(),
+	},
+	notifications: {
+		create: vi.fn(),
+	},
+	alarms: {
+		create: vi.fn(),
+		onAlarm: {addListener: vi.fn()},
 	},
 });
