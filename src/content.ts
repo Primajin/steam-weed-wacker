@@ -17,6 +17,7 @@ import type {
 } from './types.js';
 
 const METADATA_TIMEOUT_MS = 5000;
+const MAX_NETWORK_RETRIES = 5;
 
 const ITEM_ROW_HEIGHT = 58; // Fixed height (px) of each per-item decision row
 const VIRTUAL_LIST_HEIGHT = 180; // Max-height (px) of the scrollable list container
@@ -311,6 +312,7 @@ async function fetchJsonWithRetry(
 	packageId: string,
 	ctx: RequestContext,
 ): Promise<Response> {
+	let networkRetries = 0;
 	while (true) {
 		try {
 			// eslint-disable-next-line no-await-in-loop
@@ -341,12 +343,19 @@ async function fetchJsonWithRetry(
 					remaining = Math.ceil((endAt - Date.now()) / 1000);
 				}
 
+				networkRetries = 0;
 				continue;
 			}
 
+			networkRetries = 0;
 			return response;
 		} catch (error) {
-			console.error(`Network error on Store API call (${url}):`, error);
+			networkRetries++;
+			console.error(`Network error on Store API call (${url}) [attempt ${networkRetries}/${MAX_NETWORK_RETRIES}]:`, error);
+			if (networkRetries >= MAX_NETWORK_RETRIES) {
+				throw new Error(`Store API unreachable after ${MAX_NETWORK_RETRIES} attempts: ${url}`, {cause: error});
+			}
+
 			// eslint-disable-next-line no-await-in-loop
 			await sleep(5000);
 		}
@@ -525,6 +534,7 @@ async function deletePackageWithRetry(
 	formData.append('sessionid', sessionId);
 	formData.append('packageid', packageId);
 
+	let networkRetries = 0;
 	while (true) {
 		try {
 			const startedAt = performance.now();
@@ -534,6 +544,7 @@ async function deletePackageWithRetry(
 				body: formData,
 			});
 
+			networkRetries = 0;
 			if (response.ok) {
 				let payload: {success?: number} = {};
 				try {
@@ -606,7 +617,12 @@ async function deletePackageWithRetry(
 
 			return {reason: 'ERROR', details: `HTTP ${response.status}.`};
 		} catch (error) {
-			console.error(`Network error while deleting ${packageId}`, error);
+			networkRetries++;
+			console.error(`Network error while deleting ${packageId} [attempt ${networkRetries}/${MAX_NETWORK_RETRIES}]:`, error);
+			if (networkRetries >= MAX_NETWORK_RETRIES) {
+				return {reason: 'ERROR', details: `Network unreachable after ${MAX_NETWORK_RETRIES} attempts.`};
+			}
+
 			// eslint-disable-next-line no-await-in-loop
 			await sleep(5000);
 		}
@@ -631,9 +647,17 @@ async function savePersistentContext(context: MetadataContext): Promise<void> {
 	const pkgToAppRaw = Object.fromEntries(context.packageToAppCache);
 	const appMetaRaw = Object.fromEntries(context.appMetadataCache);
 
-	await chrome.storage.local.set({
-		[CACHE_PKG_TO_APP_KEY]: pkgToAppRaw,
-		[CACHE_APP_METADATA_KEY]: appMetaRaw,
+	await new Promise<void>(resolve => {
+		chrome.storage.local.set({
+			[CACHE_PKG_TO_APP_KEY]: pkgToAppRaw,
+			[CACHE_APP_METADATA_KEY]: appMetaRaw,
+		}, () => {
+			if (chrome.runtime.lastError) {
+				console.error('savePersistentContext failed:', chrome.runtime.lastError.message);
+			}
+
+			resolve();
+		});
 	});
 }
 
@@ -805,8 +829,14 @@ async function removeTrashLicenses({
 						// next run (zombie), we can detect it and stop wasting rate-limit tokens.
 						attemptedDeletions.add(packageId);
 						// eslint-disable-next-line no-await-in-loop
-						await chrome.storage.local.set({
-							[CACHE_ATTEMPTED_DELETIONS_KEY]: [...attemptedDeletions],
+						await new Promise<void>(resolve => {
+							chrome.storage.local.set({[CACHE_ATTEMPTED_DELETIONS_KEY]: [...attemptedDeletions]}, () => {
+								if (chrome.runtime.lastError) {
+									console.error('attemptedDeletions write failed:', chrome.runtime.lastError.message);
+								}
+
+								resolve();
+							});
 						});
 					}
 				}
