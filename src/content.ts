@@ -233,6 +233,14 @@ function updateUi(
 	// Display newest items first (reverse order)
 	const totalItems = report.items.length;
 
+	const lastItem = report.items.at(-1);
+	const currentTitle = lastItem !== undefined && lastItem.packageId === currentId
+		? lastItem.title
+		: undefined;
+	const currentDisplay = currentId === undefined
+		? '---'
+		: (currentTitle === undefined ? escapeHtml(currentId) : `${escapeHtml(currentId)} — ${escapeHtml(currentTitle)}`);
+
 	dashboard.innerHTML = `
 		<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
 			<h3 style="margin: 0; color: #66c0f4; font-size: 18px; text-transform: uppercase; letter-spacing: 1px;">🧹 Steam Auto-Cleanup</h3>
@@ -252,7 +260,7 @@ function updateUi(
 			<div style="width: ${percent}%; height: 100%; background: linear-gradient(90deg, #1a9bdc, #66c0f4); transition: width 0.2s ease-out;"></div>
 		</div>
 		<div style="font-size: 12px; color: #8f98a0; margin: 10px 0;">
-			Current ID: ${currentId === undefined ? '---' : escapeHtml(currentId)}
+			Current: ${currentDisplay}
 		</div>
 		${etaHtml}
 		<div style="display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 6px; margin-bottom: 10px; font-size: 12px;">
