@@ -752,6 +752,7 @@ async function removeTrashLicenses({
 		return;
 	}
 
+	let isMetadataCacheDirty = false;
 	let didStop = false;
 	for (const packageId of targets) {
 		if (isStopRequested) {
@@ -809,6 +810,7 @@ async function removeTrashLicenses({
 				// so the dashboard shows which titles would be protected by metadata checks.
 				// eslint-disable-next-line no-await-in-loop
 				const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext, {dashboard, report});
+				isMetadataCacheDirty = true;
 
 				if (hiddenGem.reason !== undefined) {
 					decision = {
@@ -866,9 +868,10 @@ async function removeTrashLicenses({
 		}
 
 		recordDecision(report, decision);
-		if (report.processed % SAVE_BATCH_SIZE === 0) {
+		if (isMetadataCacheDirty && report.processed % SAVE_BATCH_SIZE === 0) {
 			// eslint-disable-next-line no-await-in-loop
 			await savePersistentContext(metadataContext);
+			isMetadataCacheDirty = false;
 		}
 
 		const now = performance.now();
@@ -878,7 +881,9 @@ async function removeTrashLicenses({
 		}
 	}
 
-	await savePersistentContext(metadataContext);
+	if (isMetadataCacheDirty) {
+		await savePersistentContext(metadataContext);
+	}
 
 	updateUi(
 		dashboard,
