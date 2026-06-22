@@ -81,6 +81,20 @@ const SKIP_REASONS: SkipReason[] = [
 	'SKIP_ZOMBIE',
 ];
 
+const REASON_DISPLAY: Record<DecisionReason, {label: string; icon: string; color: string}> = {
+	/* eslint-disable @typescript-eslint/naming-convention -- keys must match DecisionReason union literals which use SCREAMING_SNAKE_CASE */
+	DELETE: {label: 'Deleted', icon: '🗑️', color: '#a4d007'},
+	ERROR: {label: 'Error', icon: '❌', color: '#e54022'},
+	SKIP_ALLOWLIST_ID: {label: 'Protected (ID)', icon: '📋', color: '#8f98a0'},
+	SKIP_ALLOWLIST_PATTERN: {label: 'Protected (pattern)', icon: '📋', color: '#8f98a0'},
+	SKIP_PROTECTED_KEYWORD: {label: 'DLC / Soundtrack', icon: '🛡️', color: '#8f98a0'},
+	SKIP_HIDDEN_GEM: {label: 'Hidden Gem', icon: '💎', color: '#66c0f4'},
+	SKIP_METADATA_UNAVAILABLE: {label: 'Metadata N/A', icon: '❓', color: '#e5a822'},
+	SKIP_NOT_ON_PAGE: {label: 'Not on page', icon: '👻', color: '#8f98a0'},
+	SKIP_ZOMBIE: {label: 'Zombie', icon: '🧟', color: '#e5a822'},
+	/* eslint-enable @typescript-eslint/naming-convention */
+};
+
 export const ACCOUNT_TABLE_ROW_HEIGHT_PX = 47; // Estimated height (px) of each .accountTable row
 
 export function injectPerformanceStyles(): void {
@@ -202,7 +216,7 @@ function updateUi(
 		: '';
 
 	const reasonsHtml = SKIP_REASONS
-		.map(reason => `<li>${reason}: ${report.skipCounts[reason] ?? 0}</li>`)
+		.map(reason => `<li>${REASON_DISPLAY[reason].icon} ${REASON_DISPLAY[reason].label}: <strong>${report.skipCounts[reason] ?? 0}</strong></li>`)
 		.join('');
 
 	const eta = computeEtaStats(report);
@@ -242,10 +256,10 @@ function updateUi(
 		</div>
 		${etaHtml}
 		<div style="display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 6px; margin-bottom: 10px; font-size: 12px;">
-			<div>Total candidates: ${report.totalCandidates}</div>
-			<div>${report.mode === 'DRY_RUN' ? 'Would delete' : 'Deleted'}: ${deletedCount}</div>
-			<div>Skipped: ${skippedCount}</div>
-			<div>Errors: ${errorCount}</div>
+			<div>Total: <strong>${report.totalCandidates}</strong></div>
+			<div>${report.mode === 'DRY_RUN' ? 'Would delete' : 'Deleted'}: <strong style="color: #a4d007">${deletedCount}</strong></div>
+			<div>Skipped: <strong style="color: #8f98a0">${skippedCount}</strong></div>
+			<div>Errors: <strong style="color: ${errorCount > 0 ? '#e54022' : '#8f98a0'}">${errorCount}</strong></div>
 		</div>
 		<div style="font-size: 12px; margin-bottom: 8px;">
 			<strong>Skipped by reason</strong>
@@ -280,11 +294,14 @@ function updateUi(
 		listElement.style.top = `${startIndex * ITEM_ROW_HEIGHT}px`;
 		listElement.innerHTML = Array.from({length: endIndex - startIndex}, (_, offset) => {
 			const item = report.items[totalItems - 1 - (startIndex + offset)];
+			const display = REASON_DISPLAY[item.reason];
+			const idLabel = `<strong style="color: ${display.color}">${display.icon} ${escapeHtml(item.packageId)}</strong>`
+				+ ` <span style="color: #c6d4df; font-size: 11px;">${display.label}</span>`;
 			return `
-				<li style="height: ${ITEM_ROW_HEIGHT}px; box-sizing: border-box; padding-bottom: 6px; border-bottom: 1px solid #2a475e; overflow: hidden;">
-					<div><strong>${escapeHtml(item.packageId)}</strong> — ${escapeHtml(item.reason)}</div>
-					<div style="font-size: 11px; color: #8f98a0;">${escapeHtml(item.title)}</div>
-					${item.details === undefined ? '' : `<div style="font-size: 11px; color: #e5a822;">${escapeHtml(item.details)}</div>`}
+				<li style="height: ${ITEM_ROW_HEIGHT}px; box-sizing: border-box; padding: 4px 0 6px 8px; border-bottom: 1px solid #2a475e; border-left: 3px solid ${display.color}; overflow: hidden;">
+					<div style="font-size: 12px;">${idLabel}</div>
+					<div style="font-size: 11px; color: #8f98a0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.title)}</div>
+					${item.details === undefined ? '' : `<div style="font-size: 11px; color: #8f98a0;">${escapeHtml(item.details)}</div>`}
 				</li>
 			`;
 		}).join('');
