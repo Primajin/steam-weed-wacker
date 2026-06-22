@@ -23,6 +23,8 @@ const ITEM_ROW_HEIGHT = 58; // Fixed height (px) of each per-item decision row
 const VIRTUAL_LIST_HEIGHT = 180; // Max-height (px) of the scrollable list container
 const VIRTUAL_BUFFER = 2; // Extra rows to render above and below the visible window
 
+const RENDER_THROTTLE_MS = 250;
+
 const CACHE_PKG_TO_APP_KEY = 'cache_package_to_app';
 const CACHE_APP_METADATA_KEY = 'cache_app_metadata';
 const PYTHON_PEARLS_STORAGE_KEY = 'pythonImportedPearls';
@@ -49,6 +51,7 @@ type ReviewReport = {
 	errorCount: number;
 	skipCounts: Partial<Record<SkipReason, number>>;
 	items: ItemDecision[];
+	lastRenderAt: number;
 };
 
 type MetadataContext = {
@@ -703,6 +706,7 @@ async function removeTrashLicenses({
 		errorCount: 0,
 		skipCounts: {},
 		items: [],
+		lastRenderAt: 0,
 	};
 
 	const dashboard = createDashboard();
@@ -851,7 +855,11 @@ async function removeTrashLicenses({
 		}
 
 		recordDecision(report, decision);
-		updateUi(dashboard, report, packageId);
+		const now = performance.now();
+		if (now - report.lastRenderAt >= RENDER_THROTTLE_MS) {
+			updateUi(dashboard, report, packageId);
+			report.lastRenderAt = now;
+		}
 	}
 
 	updateUi(

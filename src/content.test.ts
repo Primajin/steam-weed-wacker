@@ -195,6 +195,7 @@ function makeReport() {
 		errorCount: 0,
 		skipCounts,
 		items,
+		lastRenderAt: 0,
 	};
 }
 
