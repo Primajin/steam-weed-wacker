@@ -10,7 +10,9 @@ import {
 	buildLinkMap,
 	escapeHtml,
 	extractTitle,
+	recordDecision,
 } from './content.js';
+import type {DecisionReason, ItemDecision} from './types.js';
 
 describe('ACCOUNT_TABLE_ROW_HEIGHT_PX', () => {
 	it('is a positive integer', () => {
@@ -176,5 +178,55 @@ describe('extractTitle', () => {
 		link.href = 'javascript:RemoveFreeLicense(42,\'x\')';
 		document.body.append(link);
 		expect(extractTitle(link, '42')).toBe('Package 42');
+	});
+});
+
+function makeReport() {
+	const skipCounts: Partial<Record<DecisionReason, number>> = {};
+	const items: ItemDecision[] = [];
+	return {
+		mode: 'EXECUTE' as const,
+		totalCandidates: 10,
+		processed: 0,
+		startedAt: 0,
+		rateLimitCount: 0,
+		rateLimitTotalWaitMs: 0,
+		deletedCount: 0,
+		errorCount: 0,
+		skipCounts,
+		items,
+	};
+}
+
+describe('recordDecision', () => {
+	it('pushes item and increments processed', () => {
+		const report = makeReport();
+		recordDecision(report, {packageId: '1', title: 'A', reason: 'DELETE'});
+		expect(report.items).toHaveLength(1);
+		expect(report.processed).toBe(1);
+	});
+
+	it('increments deletedCount for DELETE', () => {
+		const report = makeReport();
+		recordDecision(report, {packageId: '1', title: 'A', reason: 'DELETE'});
+		expect(report.deletedCount).toBe(1);
+		expect(report.errorCount).toBe(0);
+	});
+
+	it('increments errorCount for ERROR', () => {
+		const report = makeReport();
+		recordDecision(report, {packageId: '1', title: 'A', reason: 'ERROR'});
+		expect(report.errorCount).toBe(1);
+		expect(report.deletedCount).toBe(0);
+	});
+
+	it('increments the correct skipCounts entry for skip reasons', () => {
+		const report = makeReport();
+		recordDecision(report, {packageId: '1', title: 'A', reason: 'SKIP_ZOMBIE'});
+		recordDecision(report, {packageId: '2', title: 'B', reason: 'SKIP_ZOMBIE'});
+		recordDecision(report, {packageId: '3', title: 'C', reason: 'SKIP_HIDDEN_GEM'});
+		expect(report.skipCounts.SKIP_ZOMBIE).toBe(2);
+		expect(report.skipCounts.SKIP_HIDDEN_GEM).toBe(1);
+		expect(report.skipCounts.SKIP_ALLOWLIST_ID).toBeUndefined();
 	});
 });

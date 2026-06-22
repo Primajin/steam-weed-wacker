@@ -6,6 +6,7 @@ import {
 	getSteamSessionId,
 	parseProtectedTitlePatterns,
 	shouldProtectHiddenGem,
+	formatTime,
 } from './utils.js';
 import type {
 	DecisionReason,
@@ -40,12 +41,23 @@ type ReviewReport = {
 	mode: 'DRY_RUN' | 'EXECUTE';
 	totalCandidates: number;
 	processed: number;
+	startedAt: number;
+	rateLimitCount: number;
+	rateLimitTotalWaitMs: number;
+	deletedCount: number;
+	errorCount: number;
+	skipCounts: Partial<Record<SkipReason, number>>;
 	items: ItemDecision[];
 };
 
 type MetadataContext = {
 	packageToAppCache: Map<string, number | undefined>;
 	appMetadataCache: Map<number, HiddenGemMetadata | undefined>;
+};
+
+type RequestContext = {
+	dashboard: HTMLDivElement;
+	report: ReviewReport;
 };
 
 type SkipReason = Exclude<DecisionReason, 'DELETE' | 'ERROR'>;
@@ -60,7 +72,6 @@ const SKIP_REASONS: SkipReason[] = [
 	'SKIP_PROTECTED_KEYWORD',
 	'SKIP_HIDDEN_GEM',
 	'SKIP_METADATA_UNAVAILABLE',
-	'SKIP_RATE_LIMIT',
 	'SKIP_NOT_ON_PAGE',
 	'SKIP_ZOMBIE',
 ];
@@ -129,8 +140,42 @@ export function extractTitle(link: HTMLAnchorElement, packageId: string): string
 	return text.length > 0 ? text : `Package ${packageId}`;
 }
 
-function countReason(report: ReviewReport, reason: DecisionReason): number {
-	return report.items.filter(item => item.reason === reason).length;
+type EtaStats = {
+	avgItemsPerMin: string;
+	etaFormatted: string;
+	rateLimitBreaksText: string;
+};
+
+function computeEtaStats(report: ReviewReport): EtaStats | undefined {
+	if (report.processed === 0) {
+		return undefined;
+	}
+
+	const elapsedMs = performance.now() - report.startedAt;
+	const activeMs = Math.max(1, elapsedMs - report.rateLimitTotalWaitMs);
+	const avgMsPerItem = activeMs / report.processed;
+	const remainingItems = report.totalCandidates - report.processed;
+	const avgItemsPerMinute = 60_000 / avgMsPerItem;
+
+	const expectedMoreBreaks = report.rateLimitCount > 0
+		? Math.ceil((remainingItems * report.rateLimitCount) / report.processed)
+		: 0;
+	const avgWaitMsPerBreak = report.rateLimitCount > 0
+		? report.rateLimitTotalWaitMs / report.rateLimitCount
+		: DEFAULT_RETRY_AFTER_SECONDS * 1000;
+	const processingEtaMs = avgMsPerItem * remainingItems;
+	const breakEtaMs = expectedMoreBreaks * avgWaitMsPerBreak;
+	const totalEtaSeconds = Math.ceil((processingEtaMs + breakEtaMs) / 1000);
+
+	const rateLimitBreaksText = report.rateLimitCount === 0
+		? 'none so far'
+		: `${report.rateLimitCount} hit, ~${expectedMoreBreaks} more`;
+
+	return {
+		avgItemsPerMin: avgItemsPerMinute.toFixed(1),
+		etaFormatted: formatTime(totalEtaSeconds),
+		rateLimitBreaksText,
+	};
 }
 
 function updateUi(
@@ -142,8 +187,7 @@ function updateUi(
 	const percent = report.totalCandidates === 0
 		? '100.0'
 		: ((report.processed / report.totalCandidates) * 100).toFixed(1);
-	const deletedCount = countReason(report, 'DELETE');
-	const errorCount = countReason(report, 'ERROR');
+	const {deletedCount, errorCount} = report;
 	const skippedCount = report.items.length - deletedCount - errorCount;
 	const modeLabel = report.mode === 'DRY_RUN' ? 'Dry Run (no deletions)' : 'Execute (deletions enabled)';
 	const dryRunBanner = report.mode === 'DRY_RUN'
@@ -153,12 +197,22 @@ function updateUi(
 		: '';
 
 	const reasonsHtml = SKIP_REASONS
-		.map(reason => `<li>${reason}: ${countReason(report, reason)}</li>`)
+		.map(reason => `<li>${reason}: ${report.skipCounts[reason] ?? 0}</li>`)
 		.join('');
 
+	const eta = computeEtaStats(report);
+	const etaHtml = eta === undefined
+		? ''
+		: `<div style="font-size: 12px; margin-bottom: 8px; padding: 6px 8px; background: rgba(102, 192, 244, 0.06); border-radius: 4px; border: 1px solid #2a475e;">
+			<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; text-align: center;">
+				<div><div style="color: #8f98a0; margin-bottom: 2px;">Speed</div>${eta.avgItemsPerMin} items/min</div>
+				<div><div style="color: #8f98a0; margin-bottom: 2px;">ETA</div>${eta.etaFormatted}</div>
+				<div><div style="color: #8f98a0; margin-bottom: 2px;">Rate limits</div>${eta.rateLimitBreaksText}</div>
+			</div>
+		</div>`;
+
 	// Display newest items first (reverse order)
-	const reversedItems = report.items.toReversed();
-	const totalItems = reversedItems.length;
+	const totalItems = report.items.length;
 
 	dashboard.innerHTML = `
 		<h3 style="margin: 0 0 10px 0; color: #66c0f4; font-size: 18px; text-transform: uppercase; letter-spacing: 1px;">🧹 Steam Auto-Cleanup</h3>
@@ -177,6 +231,7 @@ function updateUi(
 		<div style="font-size: 12px; color: #8f98a0; margin: 10px 0;">
 			Current ID: ${currentId === undefined ? '---' : escapeHtml(currentId)}
 		</div>
+		${etaHtml}
 		<div style="display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 6px; margin-bottom: 10px; font-size: 12px;">
 			<div>Total candidates: ${report.totalCandidates}</div>
 			<div>${report.mode === 'DRY_RUN' ? 'Would delete' : 'Deleted'}: ${deletedCount}</div>
@@ -210,16 +265,16 @@ function updateUi(
 		const endIndex = Math.min(totalItems, startIndex + visibleCount);
 
 		listElement.style.top = `${startIndex * ITEM_ROW_HEIGHT}px`;
-		listElement.innerHTML = reversedItems
-			.slice(startIndex, endIndex)
-			.map(item => `
+		listElement.innerHTML = Array.from({length: endIndex - startIndex}, (_, offset) => {
+			const item = report.items[totalItems - 1 - (startIndex + offset)];
+			return `
 				<li style="height: ${ITEM_ROW_HEIGHT}px; box-sizing: border-box; padding-bottom: 6px; border-bottom: 1px solid #2a475e; overflow: hidden;">
 					<div><strong>${escapeHtml(item.packageId)}</strong> — ${escapeHtml(item.reason)}</div>
 					<div style="font-size: 11px; color: #8f98a0;">${escapeHtml(item.title)}</div>
 					${item.details === undefined ? '' : `<div style="font-size: 11px; color: #e5a822;">${escapeHtml(item.details)}</div>`}
 				</li>
-			`)
-			.join('');
+			`;
+		}).join('');
 	}
 
 	renderVisibleItems(0);
@@ -251,6 +306,53 @@ async function fetchJsonWithTimeout(url: string): Promise<Response> {
 	}
 }
 
+async function fetchJsonWithRetry(
+	url: string,
+	packageId: string,
+	ctx: RequestContext,
+): Promise<Response> {
+	while (true) {
+		try {
+			// eslint-disable-next-line no-await-in-loop
+			const response = await fetchJsonWithTimeout(url);
+
+			if (response.status === 429) {
+				const retryAfterHeader = response.headers.get('Retry-After');
+				let waitTime = Number(retryAfterHeader ?? '');
+				if (!Number.isFinite(waitTime) || waitTime <= 0) {
+					waitTime = DEFAULT_RETRY_AFTER_SECONDS;
+				}
+
+				ctx.report.rateLimitCount++;
+				const endAt = Date.now() + (waitTime * 1000);
+				let remaining = waitTime;
+				while (remaining > 0) {
+					updateUi(
+						ctx.dashboard,
+						ctx.report,
+						packageId,
+						`<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
+							⚠️ Store API rate-limited (429). Waiting ${remaining}s before retry...
+						</div>`,
+					);
+					// eslint-disable-next-line no-await-in-loop
+					await sleep(500);
+					ctx.report.rateLimitTotalWaitMs += 500;
+					remaining = Math.ceil((endAt - Date.now()) / 1000);
+				}
+
+				continue;
+			}
+
+			return response;
+		} catch (error) {
+			console.error(`Network error on Store API call (${url}):`, error);
+			// eslint-disable-next-line no-await-in-loop
+			await sleep(5000);
+		}
+	}
+}
+
 function getAppIdFromRow(link: HTMLAnchorElement): number | undefined {
 	const row = link.closest('tr');
 	const appLink = row?.querySelector<HTMLAnchorElement>('a[href*="/app/"]');
@@ -271,27 +373,28 @@ async function resolveAppIdForPackage(
 	packageId: string,
 	link: HTMLAnchorElement,
 	context: MetadataContext,
-): Promise<{appId?: number; rateLimited: boolean; successFalse: boolean}> {
+	ctx: RequestContext,
+): Promise<number | undefined | 'dead'> {
 	if (context.packageToAppCache.has(packageId)) {
-		const cached = context.packageToAppCache.get(packageId);
-		return {appId: cached, rateLimited: false, successFalse: cached === undefined};
+		return context.packageToAppCache.get(packageId);
 	}
 
 	const appIdFromRow = getAppIdFromRow(link);
 	if (appIdFromRow !== undefined) {
 		context.packageToAppCache.set(packageId, appIdFromRow);
-		return {appId: appIdFromRow, rateLimited: false, successFalse: false};
+		return appIdFromRow;
 	}
 
 	try {
-		const response = await fetchJsonWithTimeout(`https://store.steampowered.com/api/packagedetails?packageids=${packageId}`);
-		if (response.status === 429) {
-			return {rateLimited: true, successFalse: false};
-		}
+		const response = await fetchJsonWithRetry(
+			`https://store.steampowered.com/api/packagedetails?packageids=${packageId}`,
+			packageId,
+			ctx,
+		);
 
 		if (!response.ok) {
 			context.packageToAppCache.set(packageId, undefined);
-			return {rateLimited: false, successFalse: true};
+			return undefined;
 		}
 
 		const payload = await response.json() as PackageDetailsResponse;
@@ -299,37 +402,39 @@ async function resolveAppIdForPackage(
 		// Steam explicitly says this package no longer exists in the store
 		if (payload[packageId]?.success === false) {
 			context.packageToAppCache.set(packageId, undefined);
-			return {rateLimited: false, successFalse: true};
+			return 'dead';
 		}
 
 		const appId = payload[packageId]?.data?.apps?.[0]?.id;
 		const normalizedAppId = appId !== undefined && Number.isSafeInteger(appId) && appId > 0 ? appId : undefined;
 		context.packageToAppCache.set(packageId, normalizedAppId);
-		// Package exists in Steam (success:true) but has no linked app; not a dead licence
-		return {appId: normalizedAppId, rateLimited: false, successFalse: false};
+		return normalizedAppId;
 	} catch {
 		context.packageToAppCache.set(packageId, undefined);
-		return {rateLimited: false, successFalse: true};
+		return undefined;
 	}
 }
 
 async function getHiddenGemMetadata(
 	appId: number,
+	packageId: string,
 	context: MetadataContext,
-): Promise<{metadata?: HiddenGemMetadata; rateLimited: boolean}> {
+	ctx: RequestContext,
+): Promise<HiddenGemMetadata | undefined> {
 	if (context.appMetadataCache.has(appId)) {
-		return {metadata: context.appMetadataCache.get(appId), rateLimited: false};
+		return context.appMetadataCache.get(appId);
 	}
 
 	try {
-		const appDetailsResponse = await fetchJsonWithTimeout(`https://store.steampowered.com/api/appdetails?appids=${appId}&filters=is_free,type`);
-		if (appDetailsResponse.status === 429) {
-			return {rateLimited: true};
-		}
+		const appDetailsResponse = await fetchJsonWithRetry(
+			`https://store.steampowered.com/api/appdetails?appids=${appId}&filters=is_free,type`,
+			packageId,
+			ctx,
+		);
 
 		if (!appDetailsResponse.ok) {
 			context.appMetadataCache.set(appId, undefined);
-			return {rateLimited: false};
+			return undefined;
 		}
 
 		const appDetailsPayload = await appDetailsResponse.json() as AppDetailsResponse;
@@ -341,17 +446,18 @@ async function getHiddenGemMetadata(
 				reviewCount: 0,
 			};
 			context.appMetadataCache.set(appId, metadata);
-			return {metadata, rateLimited: false};
+			return metadata;
 		}
 
-		const reviewsResponse = await fetchJsonWithTimeout(`https://store.steampowered.com/appreviews/${appId}?json=1&language=all&purchase_type=all&num_per_page=0&filter=summary`);
-		if (reviewsResponse.status === 429) {
-			return {rateLimited: true};
-		}
+		const reviewsResponse = await fetchJsonWithRetry(
+			`https://store.steampowered.com/appreviews/${appId}?json=1&language=all&purchase_type=all&num_per_page=0&filter=summary`,
+			packageId,
+			ctx,
+		);
 
 		if (!reviewsResponse.ok) {
 			context.appMetadataCache.set(appId, undefined);
-			return {rateLimited: false};
+			return undefined;
 		}
 
 		const reviewPayload = await reviewsResponse.json() as AppReviewsResponse;
@@ -360,7 +466,7 @@ async function getHiddenGemMetadata(
 		const reviewCount = summary?.total_reviews;
 		if (reviewScoreDescription === undefined || reviewScoreDescription.length === 0 || reviewCount === undefined) {
 			context.appMetadataCache.set(appId, undefined);
-			return {rateLimited: false};
+			return undefined;
 		}
 
 		const metadata: HiddenGemMetadata = {
@@ -369,10 +475,10 @@ async function getHiddenGemMetadata(
 			reviewCount,
 		};
 		context.appMetadataCache.set(appId, metadata);
-		return {metadata, rateLimited: false};
+		return metadata;
 	} catch {
 		context.appMetadataCache.set(appId, undefined);
-		return {rateLimited: false};
+		return undefined;
 	}
 }
 
@@ -380,39 +486,29 @@ async function evaluateHiddenGemProtection(
 	packageId: string,
 	link: HTMLAnchorElement,
 	context: MetadataContext,
+	ctx: RequestContext,
 ): Promise<{reason?: DecisionReason; details?: string}> {
-	const appResolution = await resolveAppIdForPackage(packageId, link, context);
-	if (appResolution.rateLimited) {
-		return {reason: 'SKIP_RATE_LIMIT', details: 'Store metadata endpoint is rate-limited.'};
-	}
+	const appId = await resolveAppIdForPackage(packageId, link, context, ctx);
 
 	// Dead/removed packages (Steam returned success:false) cannot be hidden gems —
 	// they have no active store presence to protect, so allow deletion.
-	if (appResolution.successFalse || appResolution.appId === undefined) {
+	if (appId === 'dead' || appId === undefined) {
 		return {};
 	}
 
-	const metadataResult = await getHiddenGemMetadata(appResolution.appId, context);
-	if (metadataResult.rateLimited) {
-		return {reason: 'SKIP_RATE_LIMIT', details: 'Review metadata endpoint is rate-limited.'};
-	}
-
-	if (metadataResult.metadata === undefined) {
+	const metadata = await getHiddenGemMetadata(appId, packageId, context, ctx);
+	if (metadata === undefined) {
 		return {reason: 'SKIP_METADATA_UNAVAILABLE', details: 'Missing review metadata (fail-safe skip).'};
 	}
 
-	if (metadataResult.metadata.reviewCount === 0) {
+	if (metadata.reviewCount === 0) {
 		return {};
 	}
 
-	if (shouldProtectHiddenGem(
-		metadataResult.metadata.isFree,
-		metadataResult.metadata.reviewScoreDescription,
-		metadataResult.metadata.reviewCount,
-	)) {
+	if (shouldProtectHiddenGem(metadata.isFree, metadata.reviewScoreDescription, metadata.reviewCount)) {
 		return {
 			reason: 'SKIP_HIDDEN_GEM',
-			details: `${metadataResult.metadata.reviewScoreDescription} (${metadataResult.metadata.reviewCount} reviews).`,
+			details: `${metadata.reviewScoreDescription} (${metadata.reviewCount} reviews).`,
 		};
 	}
 
@@ -541,6 +637,18 @@ async function savePersistentContext(context: MetadataContext): Promise<void> {
 	});
 }
 
+export function recordDecision(report: ReviewReport, decision: ItemDecision): void {
+	report.items.push(decision);
+	report.processed++;
+	if (decision.reason === 'DELETE') {
+		report.deletedCount++;
+	} else if (decision.reason === 'ERROR') {
+		report.errorCount++;
+	} else {
+		report.skipCounts[decision.reason] = (report.skipCounts[decision.reason] ?? 0) + 1;
+	}
+}
+
 async function removeTrashLicenses({
 	ids,
 	protectedIds,
@@ -564,6 +672,12 @@ async function removeTrashLicenses({
 		mode: dryRun ? 'DRY_RUN' : 'EXECUTE',
 		totalCandidates: targets.length,
 		processed: 0,
+		startedAt: performance.now(),
+		rateLimitCount: 0,
+		rateLimitTotalWaitMs: 0,
+		deletedCount: 0,
+		errorCount: 0,
+		skipCounts: {},
 		items: [],
 	};
 
@@ -585,7 +699,7 @@ async function removeTrashLicenses({
 	const sessionId = dryRun ? undefined : getSteamSessionId();
 	if (!dryRun && sessionId === undefined) {
 		for (const packageId of targets) {
-			report.items.push({
+			recordDecision(report, {
 				packageId,
 				title: `Package ${packageId}`,
 				reason: 'ERROR',
@@ -593,7 +707,6 @@ async function removeTrashLicenses({
 			});
 		}
 
-		report.processed = targets.length;
 		updateUi(dashboard, report, undefined, `
 			<div style="background: rgba(229, 64, 34, 0.2); border: 1px solid #e54022; padding: 8px; border-radius: 4px; color: #e54022; margin-bottom: 10px; text-align: center; font-size: 12px;">
 				❌ Could not find Steam session ID. Reload and retry.
@@ -652,7 +765,7 @@ async function removeTrashLicenses({
 				// Always evaluate hidden gem protection first, regardless of dry run mode,
 				// so the dashboard shows which titles would be protected by metadata checks.
 				// eslint-disable-next-line no-await-in-loop
-				const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext);
+				const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext, {dashboard, report});
 
 				// Persist the updated caches after each metadata evaluation
 				// eslint-disable-next-line no-await-in-loop
@@ -707,8 +820,7 @@ async function removeTrashLicenses({
 			}
 		}
 
-		report.items.push(decision);
-		report.processed++;
+		recordDecision(report, decision);
 		updateUi(dashboard, report, packageId);
 	}
 
