@@ -16,7 +16,7 @@ import type {
 	StartRemovalMessage,
 } from './types.js';
 
-const METADATA_TIMEOUT_MS = 5000;
+const METADATA_TIMEOUT_MS = 12_000;
 const MAX_NETWORK_RETRIES = 5;
 
 const ITEM_ROW_HEIGHT = 58; // Fixed height (px) of each per-item decision row
@@ -24,6 +24,7 @@ const VIRTUAL_LIST_HEIGHT = 180; // Max-height (px) of the scrollable list conta
 const VIRTUAL_BUFFER = 2; // Extra rows to render above and below the visible window
 
 const RENDER_THROTTLE_MS = 250;
+const SAVE_BATCH_SIZE = 10;
 
 const CACHE_PKG_TO_APP_KEY = 'cache_package_to_app';
 const CACHE_APP_METADATA_KEY = 'cache_app_metadata';
@@ -809,10 +810,6 @@ async function removeTrashLicenses({
 				// eslint-disable-next-line no-await-in-loop
 				const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext, {dashboard, report});
 
-				// Persist the updated caches after each metadata evaluation
-				// eslint-disable-next-line no-await-in-loop
-				await savePersistentContext(metadataContext);
-
 				if (hiddenGem.reason !== undefined) {
 					decision = {
 						packageId,
@@ -869,12 +866,19 @@ async function removeTrashLicenses({
 		}
 
 		recordDecision(report, decision);
+		if (report.processed % SAVE_BATCH_SIZE === 0) {
+			// eslint-disable-next-line no-await-in-loop
+			await savePersistentContext(metadataContext);
+		}
+
 		const now = performance.now();
 		if (now - report.lastRenderAt >= RENDER_THROTTLE_MS) {
 			updateUi(dashboard, report, packageId);
 			report.lastRenderAt = now;
 		}
 	}
+
+	await savePersistentContext(metadataContext);
 
 	updateUi(
 		dashboard,
