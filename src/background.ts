@@ -1,3 +1,4 @@
+// eslint-disable-next-line unicorn/no-top-level-side-effects
 chrome.runtime.onMessage.addListener((request: {type: string}) => {
 	if (request.type !== 'NOTIFY_BAN') {
 		return;
@@ -15,6 +16,7 @@ chrome.runtime.onMessage.addListener((request: {type: string}) => {
 	void chrome.alarms.create('banCooldown', {delayInMinutes: 60});
 });
 
+// eslint-disable-next-line unicorn/no-top-level-side-effects
 chrome.alarms.onAlarm.addListener(alarm => {
 	if (alarm.name === 'banCooldown') {
 		void chrome.notifications.create('steam-resume-alert', {
@@ -26,3 +28,5 @@ chrome.alarms.onAlarm.addListener(alarm => {
 		});
 	}
 });
+
+export {};
