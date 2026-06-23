@@ -3,6 +3,7 @@ import {
 	it,
 	expect,
 	beforeEach,
+	vi,
 } from 'vitest';
 import {
 	ACCOUNT_TABLE_ROW_HEIGHT_PX,
@@ -11,8 +12,20 @@ import {
 	escapeHtml,
 	extractTitle,
 	recordDecision,
+	computeEtaStats,
+	getAppIdFromRow,
+	resolveAppIdForPackage,
+	getHiddenGemMetadata,
+	evaluateHiddenGemProtection,
+	batchResolveAppIds,
 } from './content.js';
 import type {DecisionReason, ItemDecision} from './types.js';
+import type {
+	ReviewReport,
+	MetadataContext,
+	RequestContext,
+	EtaStats,
+} from './content.js';
 
 describe('ACCOUNT_TABLE_ROW_HEIGHT_PX', () => {
 	it('is a positive integer', () => {
@@ -229,5 +242,436 @@ describe('recordDecision', () => {
 		expect(report.skipCounts.SKIP_ZOMBIE).toBe(2);
 		expect(report.skipCounts.SKIP_HIDDEN_GEM).toBe(1);
 		expect(report.skipCounts.SKIP_ALLOWLIST_ID).toBeUndefined();
+	});
+});
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+function makeMetadataContext(overrides?: Partial<MetadataContext>): MetadataContext {
+	return {
+		packageToAppCache: new Map(),
+		appMetadataCache: new Map(),
+		...overrides,
+	};
+}
+
+// NOTE: content.test.ts already has a local makeReport() at line 184 (used by recordDecision tests).
+// This helper is named makeFullReport to avoid a name collision. It accepts overrides and defaults
+// startedAt to performance.now() so ETA calculations get a realistic elapsed time.
+function makeFullReport(overrides?: Partial<ReviewReport>): ReviewReport {
+	return {
+		mode: 'DRY_RUN',
+		totalCandidates: 10,
+		processed: 0,
+		startedAt: performance.now(),
+		rateLimitCount: 0,
+		rateLimitTotalWaitMs: 0,
+		deletedCount: 0,
+		errorCount: 0,
+		skipCounts: {},
+		items: [],
+		lastRenderAt: 0,
+		...overrides,
+	};
+}
+
+function makeCtx(overrides?: Partial<RequestContext>): RequestContext {
+	return {
+		dashboard: document.createElement('div'),
+		report: makeFullReport(),
+		...overrides,
+	};
+}
+
+/** Creates an anchor element with no DOM context (no surrounding tr). */
+function makeOrphanLink(packageId: string): HTMLAnchorElement {
+	const link = document.createElement('a');
+	// eslint-disable-next-line no-script-url
+	link.href = `javascript:RemoveFreeLicense(${packageId},'Game')`;
+	return link;
+}
+
+/** Creates a fetch Response with a JSON body. */
+function jsonResponse(body: unknown, status = 200): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: {'Content-Type': 'application/json'},
+	});
+}
+
+describe('computeEtaStats', () => {
+	it('returns undefined when nothing has been processed', () => {
+		const report = makeFullReport({processed: 0, totalCandidates: 10});
+		expect(computeEtaStats(report)).toBeUndefined();
+	});
+
+	it('returns stats with no rate limits hit', () => {
+		const elapsed = 5000; // ms
+		const report = makeFullReport({
+			processed: 5,
+			totalCandidates: 10,
+			startedAt: performance.now() - elapsed,
+			rateLimitCount: 0,
+			rateLimitTotalWaitMs: 0,
+		});
+		const result = computeEtaStats(report) as EtaStats;
+		expect(result).toBeDefined();
+		expect(Number(result.avgItemsPerMin)).toBeGreaterThan(0);
+		expect(result.rateLimitBreaksText).toBe('none so far');
+		expect(result.etaFormatted).not.toBe('');
+	});
+
+	it('includes rate limit breaks text when rate limits were hit', () => {
+		const report = makeFullReport({
+			processed: 5,
+			totalCandidates: 10,
+			startedAt: performance.now() - 5000,
+			rateLimitCount: 2,
+			rateLimitTotalWaitMs: 120_000,
+		});
+		const result = computeEtaStats(report) as EtaStats;
+		expect(result.rateLimitBreaksText).toContain('2 hit');
+	});
+
+	it('returns "Almost Done..." ETA when remaining items is 0', () => {
+		const report = makeFullReport({
+			processed: 10,
+			totalCandidates: 10,
+			startedAt: performance.now() - 10_000,
+			rateLimitCount: 0,
+			rateLimitTotalWaitMs: 0,
+		});
+		const result = computeEtaStats(report) as EtaStats;
+		// All items processed — remaining = 0 → ETA should be "Almost Done..."
+		expect(result.etaFormatted).toBe('Almost Done...');
+	});
+});
+
+describe('getAppIdFromRow', () => {
+	beforeEach(() => {
+		document.body.innerHTML = '';
+	});
+
+	it('returns undefined when the link has no enclosing tr', () => {
+		const link = makeOrphanLink('999');
+		document.body.append(link);
+		expect(getAppIdFromRow(link)).toBeUndefined();
+	});
+
+	it('returns undefined when the row has no /app/ link', () => {
+		document.body.innerHTML = `
+			<table><tbody><tr>
+				<td><a id="t" href="javascript:void(0)">remove</a></td>
+				<td><a href="https://store.steampowered.com/bundle/12/">bundle</a></td>
+			</tr></tbody></table>
+		`;
+		expect(getAppIdFromRow(document.querySelector<HTMLAnchorElement>('#t')!)).toBeUndefined();
+	});
+
+	it('extracts a numeric app ID from an /app/ link in the same row', () => {
+		document.body.innerHTML = `
+			<table><tbody><tr>
+				<td><a id="t" href="javascript:void(0)">remove</a></td>
+				<td><a href="https://store.steampowered.com/app/440/Team_Fortress_2/">TF2</a></td>
+			</tr></tbody></table>
+		`;
+		expect(getAppIdFromRow(document.querySelector<HTMLAnchorElement>('#t')!)).toBe(440);
+	});
+
+	it('returns undefined when the app ID in the href is not a valid integer', () => {
+		document.body.innerHTML = `
+			<table><tbody><tr>
+				<td><a id="t" href="javascript:void(0)">remove</a></td>
+				<td><a href="https://store.steampowered.com/app/nope/">bad</a></td>
+			</tr></tbody></table>
+		`;
+		expect(getAppIdFromRow(document.querySelector<HTMLAnchorElement>('#t')!)).toBeUndefined();
+	});
+});
+
+describe('resolveAppIdForPackage', () => {
+	beforeEach(() => {
+		document.body.innerHTML = '';
+		vi.restoreAllMocks();
+	});
+
+	it('returns cached value immediately without fetching', async () => {
+		const context = makeMetadataContext({
+			packageToAppCache: new Map([['123', 440]]),
+		});
+		const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+		const result = await resolveAppIdForPackage('123', makeOrphanLink('123'), context, makeCtx());
+
+		expect(result).toBe(440);
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it('returns cached undefined (e.g. dead package) without fetching', async () => {
+		const context = makeMetadataContext({
+			packageToAppCache: new Map<string, number | undefined>([['123', undefined]]),
+		});
+		const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+		const result = await resolveAppIdForPackage('123', makeOrphanLink('123'), context, makeCtx());
+
+		expect(result).toBeUndefined();
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it('resolves app ID from DOM app link without fetching', async () => {
+		document.body.innerHTML = `
+			<table><tbody><tr>
+				<td><a id="remove" href="javascript:void(0)">remove</a></td>
+				<td><a href="https://store.steampowered.com/app/730/">CS2</a></td>
+			</tr></tbody></table>
+		`;
+		const link = document.querySelector<HTMLAnchorElement>('#remove')!;
+		const context = makeMetadataContext();
+		const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+		const result = await resolveAppIdForPackage('555', link, context, makeCtx());
+
+		expect(result).toBe(730);
+		expect(fetchSpy).not.toHaveBeenCalled();
+		expect(context.packageToAppCache.get('555')).toBe(730);
+	});
+
+	it('fetches from API and returns app ID on success', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			jsonResponse({'999': {success: true, data: {apps: [{id: 12345}]}}}),
+		);
+		const context = makeMetadataContext();
+
+		const result = await resolveAppIdForPackage('999', makeOrphanLink('999'), context, makeCtx());
+
+		expect(result).toBe(12345);
+		expect(context.packageToAppCache.get('999')).toBe(12345);
+	});
+
+	it('returns "dead" and caches undefined for success:false packages', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			jsonResponse({'999': {success: false}}),
+		);
+		const context = makeMetadataContext();
+
+		const result = await resolveAppIdForPackage('999', makeOrphanLink('999'), context, makeCtx());
+
+		expect(result).toBe('dead');
+		expect(context.packageToAppCache.has('999')).toBe(true);
+		expect(context.packageToAppCache.get('999')).toBeUndefined();
+	});
+
+	it('returns "error" on network failure and does NOT cache', async () => {
+		vi.useFakeTimers();
+		vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
+
+		const context = makeMetadataContext();
+		const promise = resolveAppIdForPackage('999', makeOrphanLink('999'), context, makeCtx());
+		await vi.runAllTimersAsync();
+		const result = await promise;
+
+		expect(result).toBe('error');
+		expect(context.packageToAppCache.has('999')).toBe(false);
+
+		vi.useRealTimers();
+	});
+});
+
+describe('getHiddenGemMetadata', () => {
+	beforeEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('returns cached value without fetching', async () => {
+		const cached = {isFree: true, reviewScoreDescription: 'Very Positive', reviewCount: 1000};
+		const context = makeMetadataContext({
+			appMetadataCache: new Map([[440, cached]]),
+		});
+		const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+		const result = await getHiddenGemMetadata(440, '123', context, makeCtx());
+
+		expect(result).toBe(cached);
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it('returns metadata for a free game with review data', async () => {
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(jsonResponse({
+				'440': {success: true, data: {is_free: true, type: 'game'}},
+			}))
+			.mockResolvedValueOnce(jsonResponse({
+				query_summary: {review_score_desc: 'Very Positive', total_reviews: 5000},
+			}));
+
+		const context = makeMetadataContext();
+		const result = await getHiddenGemMetadata(440, '123', context, makeCtx());
+
+		expect(result).toEqual({isFree: true, reviewScoreDescription: 'Very Positive', reviewCount: 5000});
+		expect(context.appMetadataCache.get(440)).toEqual(result);
+	});
+
+	it('returns early metadata without reviews for a non-free app', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({
+			'730': {success: true, data: {is_free: false, type: 'game'}},
+		}));
+
+		const context = makeMetadataContext();
+		const result = await getHiddenGemMetadata(730, '555', context, makeCtx());
+
+		expect(result).toEqual({isFree: false, reviewScoreDescription: '', reviewCount: 0});
+	});
+
+	it('returns undefined and caches undefined when appdetails fetch fails', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('', {status: 500}));
+
+		const context = makeMetadataContext();
+		const result = await getHiddenGemMetadata(440, '123', context, makeCtx());
+
+		expect(result).toBeUndefined();
+		expect(context.appMetadataCache.has(440)).toBe(true);
+	});
+
+	it('returns undefined when review summary is missing', async () => {
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(jsonResponse({
+				'440': {success: true, data: {is_free: true, type: 'game'}},
+			}))
+			.mockResolvedValueOnce(jsonResponse({query_summary: {}}));
+
+		const context = makeMetadataContext();
+		const result = await getHiddenGemMetadata(440, '123', context, makeCtx());
+
+		expect(result).toBeUndefined();
+	});
+});
+
+describe('evaluateHiddenGemProtection', () => {
+	beforeEach(() => {
+		document.body.innerHTML = '';
+		vi.restoreAllMocks();
+	});
+
+	it('returns {} (allow deletion) for a dead package', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			jsonResponse({'123': {success: false}}),
+		);
+		const context = makeMetadataContext();
+		const result = await evaluateHiddenGemProtection('123', makeOrphanLink('123'), context, makeCtx());
+		expect(result).toEqual({});
+	});
+
+	it('returns {} (allow deletion) when app has no reviews yet', async () => {
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(jsonResponse({'123': {success: true, data: {apps: [{id: 440}]}}}))
+			.mockResolvedValueOnce(jsonResponse({'440': {success: true, data: {is_free: true, type: 'game'}}}))
+			.mockResolvedValueOnce(jsonResponse({query_summary: {review_score_desc: 'Very Positive', total_reviews: 0}}));
+
+		const context = makeMetadataContext();
+		const result = await evaluateHiddenGemProtection('123', makeOrphanLink('123'), context, makeCtx());
+		expect(result).toEqual({});
+	});
+
+	it('returns SKIP_HIDDEN_GEM for a free game with very positive reviews above threshold', async () => {
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(jsonResponse({'123': {success: true, data: {apps: [{id: 440}]}}}))
+			.mockResolvedValueOnce(jsonResponse({'440': {success: true, data: {is_free: true, type: 'game'}}}))
+			.mockResolvedValueOnce(jsonResponse({
+				query_summary: {review_score_desc: 'Very Positive', total_reviews: 600},
+			}));
+
+		const context = makeMetadataContext();
+		const result = await evaluateHiddenGemProtection('123', makeOrphanLink('123'), context, makeCtx());
+		expect(result.reason).toBe('SKIP_HIDDEN_GEM');
+		expect(result.details).toContain('Very Positive');
+	});
+
+	it('returns SKIP_METADATA_UNAVAILABLE when app ID resolution fails with a network error', async () => {
+		vi.useFakeTimers();
+		vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
+
+		const context = makeMetadataContext();
+		const promise = evaluateHiddenGemProtection('123', makeOrphanLink('123'), context, makeCtx());
+		await vi.runAllTimersAsync();
+		const result = await promise;
+
+		expect(result.reason).toBe('SKIP_METADATA_UNAVAILABLE');
+		expect(result.details).toMatch(/network error/i);
+
+		vi.useRealTimers();
+	});
+
+	it('returns SKIP_METADATA_UNAVAILABLE when metadata fetch returns undefined', async () => {
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(jsonResponse({'123': {success: true, data: {apps: [{id: 440}]}}}))
+			.mockResolvedValueOnce(new Response('', {status: 500})); // appdetails fails
+
+		const context = makeMetadataContext();
+		const result = await evaluateHiddenGemProtection('123', makeOrphanLink('123'), context, makeCtx());
+		expect(result.reason).toBe('SKIP_METADATA_UNAVAILABLE');
+	});
+});
+
+describe('batchResolveAppIds', () => {
+	beforeEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('populates cache for all packages in the batch', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({
+			'111': {success: true, data: {apps: [{id: 100}]}},
+			'222': {success: true, data: {apps: [{id: 200}]}},
+		}));
+
+		const context = makeMetadataContext();
+		await batchResolveAppIds(['111', '222'], context, makeCtx());
+
+		expect(context.packageToAppCache.get('111')).toBe(100);
+		expect(context.packageToAppCache.get('222')).toBe(200);
+	});
+
+	it('caches undefined for dead packages (success: false)', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({
+			'111': {success: false},
+		}));
+
+		const context = makeMetadataContext();
+		await batchResolveAppIds(['111'], context, makeCtx());
+
+		expect(context.packageToAppCache.has('111')).toBe(true);
+		expect(context.packageToAppCache.get('111')).toBeUndefined();
+	});
+
+	it('does not cache anything when the request fails with a non-ok status', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('', {status: 500}));
+
+		const context = makeMetadataContext();
+		await batchResolveAppIds(['111', '222'], context, makeCtx());
+
+		expect(context.packageToAppCache.has('111')).toBe(false);
+		expect(context.packageToAppCache.has('222')).toBe(false);
+	});
+
+	it('does not cache anything on network error', async () => {
+		vi.useFakeTimers();
+		vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network'));
+
+		const context = makeMetadataContext();
+		const promise = batchResolveAppIds(['111'], context, makeCtx());
+		await vi.runAllTimersAsync();
+		await promise;
+
+		expect(context.packageToAppCache.has('111')).toBe(false);
+		vi.useRealTimers();
+	});
+
+	it('sends packages in batches of 25', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}));
+		const ids = Array.from({length: 60}, (_, i) => String(i));
+
+		await batchResolveAppIds(ids, makeMetadataContext(), makeCtx());
+
+		expect(fetchSpy).toHaveBeenCalledTimes(3); // 25 + 25 + 10
 	});
 });
