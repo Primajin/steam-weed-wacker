@@ -21,7 +21,6 @@ import {
 	type ReviewReport,
 	type MetadataContext,
 	type RequestContext,
-	type EtaStats,
 } from './content.js';
 import type {DecisionReason, ItemDecision} from './types.js';
 
