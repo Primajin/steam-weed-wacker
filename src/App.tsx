@@ -3,12 +3,12 @@ import {
 	parsePackageIds,
 } from './utils.js';
 import type {GetPageIdsResponse, StartRemovalMessage} from './types.js';
+import {PYTHON_PEARLS_STORAGE_KEY} from './constants.js';
 
 const TRASH_STORAGE_KEY = 'trashPackageIds';
 const PROTECTED_IDS_STORAGE_KEY = 'protectedPackageIds';
 const PROTECTED_PATTERNS_STORAGE_KEY = 'protectedTitlePatterns';
 const DRY_RUN_STORAGE_KEY = 'dryRunMode';
-const PYTHON_PEARLS_STORAGE_KEY = 'pythonImportedPearls';
 
 function App() {
 	const [inputIds, setInputIds] = useState('');

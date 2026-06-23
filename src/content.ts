@@ -15,6 +15,7 @@ import type {
 	ItemDecision,
 	StartRemovalMessage,
 } from './types.js';
+import {PYTHON_PEARLS_STORAGE_KEY} from './constants.js';
 
 const METADATA_TIMEOUT_MS = 12_000;
 const MAX_NETWORK_RETRIES = 5;
@@ -28,7 +29,6 @@ const SAVE_BATCH_SIZE = 10;
 
 const CACHE_PKG_TO_APP_KEY = 'cache_package_to_app';
 const CACHE_APP_METADATA_KEY = 'cache_app_metadata';
-const PYTHON_PEARLS_STORAGE_KEY = 'pythonImportedPearls';
 const CACHE_ATTEMPTED_DELETIONS_KEY = 'sww_attempted_deletions';
 
 const sleep = async (ms: number) => new Promise<void>(resolve => {
