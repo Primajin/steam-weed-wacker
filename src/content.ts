@@ -26,7 +26,6 @@ const VIRTUAL_BUFFER = 2; // Extra rows to render above and below the visible wi
 
 const RENDER_THROTTLE_MS = 250;
 const SAVE_BATCH_SIZE = 10;
-const BATCH_PACKAGE_LIMIT = 25;
 
 const CACHE_PKG_TO_APP_KEY = 'cache_package_to_app';
 const CACHE_APP_METADATA_KEY = 'cache_app_metadata';
@@ -467,50 +466,6 @@ export async function resolveAppIdForPackage(
 	}
 }
 
-export async function batchResolveAppIds(
-  packageIds: string[],
-  context: MetadataContext,
-  ctx: RequestContext,
-): Promise<void> {
-  for (let i = 0; i < packageIds.length; i += BATCH_PACKAGE_LIMIT) {
-    if (isStopRequested) break;
-    const batch = packageIds.slice(i, i + BATCH_PACKAGE_LIMIT);
-    // Steam's packagedetails API rejects percent-encoded commas (%2C); use a
-    // literal comma-separated list. Package IDs are digits only — no encoding needed.
-    const batchUrl = `https://store.steampowered.com/api/packagedetails?packageids=${batch.join(',')}`;
-
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      const response = await fetchJsonWithRetry(
-        batchUrl,
-        batch[0]!,
-        ctx,
-      );
-
-      if (!response.ok) {
-        // Leave these uncached — resolveAppIdForPackage will handle them individually.
-        continue;
-      }
-
-      // eslint-disable-next-line no-await-in-loop
-      const payload = await response.json() as PackageDetailsResponse;
-      for (const id of batch) {
-        if (payload[id]?.success === false) {
-          context.packageToAppCache.set(id, undefined); // dead package
-        } else {
-          const appId = payload[id]?.data?.apps?.[0]?.id;
-          const normalized =
-            appId !== undefined && Number.isSafeInteger(appId) && appId > 0
-              ? appId
-              : undefined;
-          context.packageToAppCache.set(id, normalized);
-        }
-      }
-    } catch {
-      // Network error for this batch — leave uncached, individual calls will return 'error'.
-    }
-  }
-}
 
 export async function getHiddenGemMetadata(
 	appId: number,
@@ -846,37 +801,6 @@ async function removeTrashLicenses({
 			</div>
 		`);
 		return;
-	}
-
-	// Pre-scan: determine which packages need API resolution, then batch-fetch their app IDs.
-	// This reduces total API calls from O(n) individual requests to O(n/25) batched requests.
-	const needsBatchResolution: string[] = [];
-	for (const packageId of targets) {
-		if (
-			protectedIdSet.has(packageId)
-			|| !linkMap.has(packageId)
-			|| attemptedDeletions.has(packageId)
-			|| pythonPearls.has(packageId)
-			|| metadataContext.packageToAppCache.has(packageId)
-		) {
-			continue;
-		}
-
-		const link = linkMap.get(packageId)!;
-
-		// Resolve from DOM if possible — no network call needed.
-		const appIdFromDom = getAppIdFromRow(link);
-		if (appIdFromDom !== undefined) {
-			metadataContext.packageToAppCache.set(packageId, appIdFromDom);
-			continue;
-		}
-
-		needsBatchResolution.push(packageId);
-	}
-
-	if (needsBatchResolution.length > 0 && !isStopRequested) {
-		await batchResolveAppIds(needsBatchResolution, metadataContext, {dashboard, report});
-		await savePersistentContext(metadataContext);
 	}
 
 	let isMetadataCacheDirty = false;

@@ -17,7 +17,6 @@ import {
 	resolveAppIdForPackage,
 	getHiddenGemMetadata,
 	evaluateHiddenGemProtection,
-	batchResolveAppIds,
 } from './content.js';
 import type {DecisionReason, ItemDecision} from './types.js';
 import type {
@@ -613,65 +612,3 @@ describe('evaluateHiddenGemProtection', () => {
 	});
 });
 
-describe('batchResolveAppIds', () => {
-	beforeEach(() => {
-		vi.restoreAllMocks();
-	});
-
-	it('populates cache for all packages in the batch', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({
-			'111': {success: true, data: {apps: [{id: 100}]}},
-			'222': {success: true, data: {apps: [{id: 200}]}},
-		}));
-
-		const context = makeMetadataContext();
-		await batchResolveAppIds(['111', '222'], context, makeCtx());
-
-		expect(context.packageToAppCache.get('111')).toBe(100);
-		expect(context.packageToAppCache.get('222')).toBe(200);
-	});
-
-	it('caches undefined for dead packages (success: false)', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({
-			'111': {success: false},
-		}));
-
-		const context = makeMetadataContext();
-		await batchResolveAppIds(['111'], context, makeCtx());
-
-		expect(context.packageToAppCache.has('111')).toBe(true);
-		expect(context.packageToAppCache.get('111')).toBeUndefined();
-	});
-
-	it('does not cache anything when the request fails with a non-ok status', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('', {status: 500}));
-
-		const context = makeMetadataContext();
-		await batchResolveAppIds(['111', '222'], context, makeCtx());
-
-		expect(context.packageToAppCache.has('111')).toBe(false);
-		expect(context.packageToAppCache.has('222')).toBe(false);
-	});
-
-	it('does not cache anything on network error', async () => {
-		vi.useFakeTimers();
-		vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network'));
-
-		const context = makeMetadataContext();
-		const promise = batchResolveAppIds(['111'], context, makeCtx());
-		await vi.runAllTimersAsync();
-		await promise;
-
-		expect(context.packageToAppCache.has('111')).toBe(false);
-		vi.useRealTimers();
-	});
-
-	it('sends packages in batches of 25', async () => {
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}));
-		const ids = Array.from({length: 60}, (_, i) => String(i));
-
-		await batchResolveAppIds(ids, makeMetadataContext(), makeCtx());
-
-		expect(fetchSpy).toHaveBeenCalledTimes(3); // 25 + 25 + 10
-	});
-});
