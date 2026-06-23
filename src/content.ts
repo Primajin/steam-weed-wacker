@@ -322,10 +322,10 @@ function updateUi(
 			const idLabel = `<strong style="color: ${display.color}">${display.icon} ${escapeHtml(item.packageId)}</strong>`
 				+ ` <span style="color: #c6d4df; font-size: 11px;">${display.label}</span>`;
 			const ts = new Date(item.timestamp);
-			const timeStr = `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}:${String(ts.getSeconds()).padStart(2, '0')}`;
+			const timeString = `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}:${String(ts.getSeconds()).padStart(2, '0')}`;
 			return `
 				<li style="height: ${ITEM_ROW_HEIGHT}px; box-sizing: border-box; padding: 4px 0 6px 8px; border-bottom: 1px solid #2a475e; border-left: 3px solid ${display.color}; overflow: hidden;">
-					<div style="font-size: 10px; color: #8f98a0;">${timeStr}</div>
+					<div style="font-size: 10px; color: #8f98a0;">${timeString}</div>
 					<div style="font-size: 12px;">${idLabel}</div>
 					<div style="font-size: 11px; color: #8f98a0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.title)}</div>
 					${item.details === undefined ? '' : `<div style="font-size: 11px; color: #8f98a0;">${escapeHtml(item.details)}</div>`}
