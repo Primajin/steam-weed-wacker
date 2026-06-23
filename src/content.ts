@@ -620,12 +620,14 @@ async function awaitCooldown(
 	ctx: RequestContext,
 	makeBanner: (remaining: number) => string,
 ): Promise<boolean> {
+	ctx.report.rateLimitCount++;
 	const endAt = Date.now() + (waitSeconds * 1000);
 	let remaining = waitSeconds;
 	while (remaining > 0 && !isStopRequested) {
 		updateUi(ctx, packageId, makeBanner(remaining));
 		// eslint-disable-next-line no-await-in-loop
 		await sleep(500);
+		ctx.report.rateLimitTotalWaitMs += 500;
 		remaining = Math.ceil((endAt - Date.now()) / 1000);
 	}
 
