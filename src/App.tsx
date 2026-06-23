@@ -1,4 +1,4 @@
-import {useState} from 'react';
+import {useState, useEffect} from 'react';
 import {
 	parsePackageIds,
 } from './utils.js';
@@ -17,6 +17,20 @@ function App() {
 	const [isDryRun, setIsDryRun] = useState(true);
 	const [status, setStatus] = useState('');
 	const [rawJsonImport, setRawJsonImport] = useState('');
+	const [isWorking, setIsWorking] = useState(false);
+
+	useEffect(() => {
+		chrome.storage.local.get(
+			[TRASH_STORAGE_KEY, PROTECTED_IDS_STORAGE_KEY, PROTECTED_PATTERNS_STORAGE_KEY, DRY_RUN_STORAGE_KEY],
+			result => {
+				const ids = (result[TRASH_STORAGE_KEY] as string[] | undefined) ?? [];
+				setInputIds(ids.join('\n'));
+				setProtectedIdsInput((result[PROTECTED_IDS_STORAGE_KEY] as string | undefined) ?? '');
+				setProtectedPatternsInput((result[PROTECTED_PATTERNS_STORAGE_KEY] as string | undefined) ?? '');
+				setIsDryRun((result[DRY_RUN_STORAGE_KEY] as boolean | undefined) ?? true);
+			},
+		);
+	}, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 	const handleSave = () => {
 		const ids = parsePackageIds(inputIds);
@@ -76,6 +90,7 @@ function App() {
 			.map(line => line.replace(/,$/v, '').replaceAll(/^["']|["']$/gv, ''))
 			.filter(line => line.length > 0);
 
+		setIsWorking(true);
 		chrome.storage.local.set({
 			[TRASH_STORAGE_KEY]: ids,
 			[PROTECTED_IDS_STORAGE_KEY]: protectedIdsInput,
@@ -95,9 +110,11 @@ function App() {
 						setStatus(`Started ${isDryRun ? 'dry run' : 'cleanup'} for ${ids.length} ID(s). Check the Steam licenses page.`);
 						window.close();
 					}).catch(() => {
+						setIsWorking(false);
 						setStatus('Error: Could not reach the Steam tab. Please reload the Steam licenses page (F5) and try again.');
 					});
 				} else {
+					setIsWorking(false);
 					void chrome.tabs.create({url: 'https://store.steampowered.com/account/licenses/'});
 					setStatus('Opened Steam licenses page. Re-open the extension to start.');
 				}
@@ -318,7 +335,7 @@ function App() {
 			<div style={{
 				display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap',
 			}}>
-				<button onClick={handleStart} style={btnStyle('#1a9bdc')}>
+				<button onClick={handleStart} disabled={isWorking} style={btnStyle('#1a9bdc')}>
 					▶ {isDryRun ? 'Start Dry Run' : 'Start Cleanup'}
 				</button>
 				<button onClick={handleCopyPageIds} style={btnStyle('#2a475e')}>

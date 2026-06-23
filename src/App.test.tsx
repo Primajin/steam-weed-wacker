@@ -277,3 +277,50 @@ describe('App: Python import', () => {
 		expect(chrome.storage.local.set).toHaveBeenCalledWith(storageCallArg, expect.any(Function));
 	});
 });
+
+describe('auto-load on mount', () => {
+	it('loads saved IDs from storage when the popup opens', async () => {
+		const getMock = vi.mocked(chrome.storage.local.get);
+		getMock.mockImplementation(((_keys: unknown, cb: (r: Record<string, unknown>) => void) => {
+			cb({
+				trashPackageIds: ['11111', '22222'],
+				protectedPackageIds: '730',
+				protectedTitlePatterns: 'Half-Life',
+				dryRunMode: false,
+			});
+		}) as typeof chrome.storage.local.get);
+
+		render(<App />);
+
+		await waitFor(() => {
+			expect(screen.getByPlaceholderText(/12345/)).toHaveValue('11111\n22222');
+		});
+		expect(screen.getByPlaceholderText('730 570')).toHaveValue('730');
+	});
+});
+
+describe('button disabled state', () => {
+	it('start button is disabled while a tab message is in-flight', async () => {
+		const tabsQueryMock = vi.mocked(chrome.tabs.query);
+		// Never resolves so we can inspect the disabled state
+		tabsQueryMock.mockImplementation(() => new Promise(() => {}));
+
+		const getMock = vi.mocked(chrome.storage.local.get);
+		getMock.mockImplementation(((_keys: unknown, cb: (r: Record<string, unknown>) => void) => {
+			cb({trashPackageIds: ['12345'], dryRunMode: true});
+		}) as typeof chrome.storage.local.get);
+
+		const setMock = vi.mocked(chrome.storage.local.set);
+		setMock.mockImplementation(((_data: unknown, cb?: () => void) => {
+			cb?.();
+		}) as typeof chrome.storage.local.set);
+
+		render(<App />);
+		await waitFor(() => expect(screen.getByPlaceholderText(/12345/)).toHaveValue('12345'));
+
+		const startBtn = screen.getByRole('button', {name: /Start Dry Run/i});
+		fireEvent.click(startBtn);
+
+		expect(startBtn).toBeDisabled();
+	});
+});
