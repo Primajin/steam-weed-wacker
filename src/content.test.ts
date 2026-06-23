@@ -149,7 +149,20 @@ describe('extractTitle', () => {
 		document.body.innerHTML = '';
 	});
 
-	it('extracts the title from the href second argument', () => {
+	it('decodes a Base64-encoded ASCII title from the href', () => {
+		// "Nothing In Elevator" → btoa → Tm90aGluZyBJbiBFbGV2YXRvcg==
+		document.body.innerHTML = `
+			<table><tbody><tr>
+				<td>12 Apr, 2026</td>
+				<td><a href="javascript:RemoveFreeLicense(1,'Tm90aGluZyBJbiBFbGV2YXRvcg==')">Remove</a></td>
+			</tr></tbody></table>
+		`;
+		const link = document.querySelector<HTMLAnchorElement>('a')!;
+		expect(extractTitle(link, '1')).toBe('Nothing In Elevator');
+	});
+
+	it('falls back to raw href value when it is not valid Base64', () => {
+		// Plain string with a space — atob throws, so raw value is returned
 		document.body.innerHTML = `
 			<table><tbody><tr>
 				<td>12 Apr, 2026</td>

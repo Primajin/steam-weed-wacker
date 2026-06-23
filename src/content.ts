@@ -157,7 +157,19 @@ export function escapeHtml(value: string): string {
 export function extractTitle(link: HTMLAnchorElement, packageId: string): string {
 	const match = /RemoveFreeLicense\(\s*\d+,\s*'(?<title>[^']*)'\s*\)/v.exec(link.href);
 	if (match?.groups?.title && match.groups.title.length > 0) {
-		return match.groups.title;
+		const raw = match.groups.title;
+		try {
+			const decoded = new TextDecoder().decode(
+				Uint8Array.from(atob(raw), c => c.charCodeAt(0)),
+			);
+			if (decoded.length > 0) {
+				return decoded;
+			}
+		} catch {
+			// Not Base64 — use raw value directly
+		}
+
+		return raw;
 	}
 
 	const row = link.closest('tr');
