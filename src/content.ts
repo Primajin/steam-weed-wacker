@@ -214,13 +214,39 @@ export function computeEtaStats(report: ReviewReport): EtaStats | undefined {
 	};
 }
 
-function updateUi(
-	dashboard: HTMLDivElement,
-	report: ReviewReport,
-	currentId: string | undefined,
-	statusMessage = '',
-	currentTitle?: string,
-): void {
+type BannerType = 'warning' | 'error' | 'success' | 'info';
+
+const BANNER_STYLES: Record<BannerType, {background: string; accent: string}> = {
+	warning: {background: 'rgba(229, 168, 34, 0.2)', accent: '#e5a822'},
+	error: {background: 'rgba(229, 64, 34, 0.2)', accent: '#e54022'},
+	success: {background: 'rgba(164, 208, 7, 0.1)', accent: '#a4d007'},
+	info: {background: 'rgba(102, 192, 244, 0.16)', accent: '#66c0f4'},
+};
+
+function statusBanner(type: BannerType, message: string): string {
+	const {background, accent} = BANNER_STYLES[type];
+	const style = `background: ${background}; border: 1px solid ${accent}; padding: 8px;`
+		+ ` border-radius: 4px; color: ${accent}; margin-bottom: 10px; text-align: center; font-size: 12px;`;
+	return `<div style="${style}">${message}</div>`;
+}
+
+function buildCurrentDisplay(currentId: string | undefined, currentTitle: string | undefined): string {
+	if (currentId === undefined) {
+		return '---';
+	}
+
+	if (currentTitle === undefined) {
+		return `<strong>${escapeHtml(currentId)}</strong>`;
+	}
+
+	const titleStyle = 'display:inline-block; max-width:260px; overflow:hidden; text-overflow:ellipsis;'
+		+ ' vertical-align:bottom; white-space:nowrap;';
+	return `<strong>${escapeHtml(currentId)}</strong> <span style="color:#8f98a0">—</span>`
+		+ ` <span style="${titleStyle}">${escapeHtml(currentTitle)}</span>`;
+}
+
+function updateUi(ctx: RequestContext, currentId: string | undefined, statusMessage = ''): void {
+	const {dashboard, report, currentTitle} = ctx;
 	const percent = report.totalCandidates === 0
 		? '100.0'
 		: ((report.processed / report.totalCandidates) * 100).toFixed(1);
@@ -251,11 +277,7 @@ function updateUi(
 	// Display newest items first (reverse order)
 	const totalItems = report.items.length;
 
-	const currentDisplay = currentId === undefined
-		? '---'
-		: (currentTitle === undefined
-			? `<strong>${escapeHtml(currentId)}</strong>`
-			: `<strong>${escapeHtml(currentId)}</strong> <span style="color:#8f98a0">—</span> <span style="display:inline-block; max-width:260px; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; white-space:nowrap;">${escapeHtml(currentTitle)}</span>`);
+	const currentDisplay = buildCurrentDisplay(currentId, currentTitle);
 
 	dashboard.innerHTML = `
 		<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -385,15 +407,7 @@ async function fetchJsonWithRetry(
 				const endAt = Date.now() + (waitTime * 1000);
 				let remaining = waitTime;
 				while (remaining > 0 && !isStopRequested) {
-					updateUi(
-						ctx.dashboard,
-						ctx.report,
-						packageId,
-						`<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
-							⚠️ Store API rate-limited (429). Waiting ${formatTime(remaining)} before retry...
-						</div>`,
-						ctx.currentTitle,
-					);
+					updateUi(ctx, packageId, statusBanner('warning', `⚠️ Store API rate-limited (429). Waiting ${formatTime(remaining)} before retry...`));
 					// eslint-disable-next-line no-await-in-loop
 					await sleep(500);
 					ctx.report.rateLimitTotalWaitMs += 500;
@@ -600,12 +614,97 @@ export async function evaluateHiddenGemProtection(
 	return {};
 }
 
+async function awaitCooldown(
+	waitSeconds: number,
+	packageId: string,
+	ctx: RequestContext,
+	makeBanner: (remaining: number) => string,
+): Promise<boolean> {
+	const endAt = Date.now() + (waitSeconds * 1000);
+	let remaining = waitSeconds;
+	while (remaining > 0 && !isStopRequested) {
+		updateUi(ctx, packageId, makeBanner(remaining));
+		// eslint-disable-next-line no-await-in-loop
+		await sleep(500);
+		remaining = Math.ceil((endAt - Date.now()) / 1000);
+	}
+
+	return isStopRequested;
+}
+
+type RemoveResponseOutcome =
+	| {action: 'return'; result: {reason: DecisionReason; details?: string}}
+	| {action: 'continue'};
+
+async function handleRemoveLicenseResponse(
+	response: Response,
+	startedAt: number,
+	packageId: string,
+	ctx: RequestContext,
+): Promise<RemoveResponseOutcome> {
+	if (response.ok) {
+		let payload: {success?: number} = {};
+		try {
+			payload = await response.json() as {success?: number};
+		} catch {
+			return {action: 'return', result: {reason: 'ERROR', details: 'Invalid response payload from Steam.'}};
+		}
+
+		if (payload.success === 1) {
+			const waitMs = Math.max(0, MIN_DELAY_MS - (performance.now() - startedAt));
+			if (waitMs > 0) {
+				await sleep(waitMs);
+			}
+
+			return {action: 'return', result: {reason: 'DELETE'}};
+		}
+
+		if (payload.success === 84) {
+			void chrome.runtime.sendMessage({type: 'NOTIFY_BAN'});
+			const isStopped = await awaitCooldown(
+				RATE_LIMIT_COOLDOWN_SECONDS,
+				packageId,
+				ctx,
+				remaining => statusBanner('error', `🛑 Rate limit exceeded (Code 84). Waiting ${formatTime(remaining)} before retry.`),
+			);
+			if (isStopped) {
+				return {action: 'return', result: {reason: 'ERROR', details: 'Stopped by user during rate-limit cooldown.'}};
+			}
+
+			return {action: 'continue'};
+		}
+
+		return {action: 'return', result: {reason: 'ERROR', details: `Steam returned code ${String(payload.success ?? 'unknown')}.`}};
+	}
+
+	if (response.status === 429) {
+		const retryAfterHeader = response.headers.get('Retry-After');
+		let waitTime = Number(retryAfterHeader ?? '');
+		if (!Number.isFinite(waitTime) || waitTime <= 0) {
+			waitTime = DEFAULT_RETRY_AFTER_SECONDS;
+		}
+
+		const isStopped = await awaitCooldown(
+			waitTime,
+			packageId,
+			ctx,
+			remaining => statusBanner('warning', `⚠️ HTTP 429. Waiting ${formatTime(remaining)} before retry.`),
+		);
+		if (isStopped) {
+			return {action: 'return', result: {reason: 'ERROR', details: 'Stopped by user during rate-limit cooldown.'}};
+		}
+
+		return {action: 'continue'};
+	}
+
+	return {action: 'return', result: {reason: 'ERROR', details: `HTTP ${response.status}.`}};
+}
+
 async function deletePackageWithRetry(
 	packageId: string,
 	sessionId: string,
 	ctx: RequestContext,
 ): Promise<{reason: DecisionReason; details?: string}> {
-	const {dashboard, report, currentTitle} = ctx;
 	const formData = new URLSearchParams();
 	formData.append('sessionid', sessionId);
 	formData.append('packageid', packageId);
@@ -621,87 +720,13 @@ async function deletePackageWithRetry(
 			});
 
 			networkRetries = 0;
-			if (response.ok) {
-				let payload: {success?: number} = {};
-				try {
-					// eslint-disable-next-line no-await-in-loop
-					payload = await response.json() as {success?: number};
-				} catch {
-					return {reason: 'ERROR', details: 'Invalid response payload from Steam.'};
-				}
-
-				if (payload.success === 1) {
-					const elapsedMs = performance.now() - startedAt;
-					const waitMs = Math.max(0, MIN_DELAY_MS - elapsedMs);
-					if (waitMs > 0) {
-						// eslint-disable-next-line no-await-in-loop
-						await sleep(waitMs);
-					}
-
-					return {reason: 'DELETE'};
-				}
-
-				if (payload.success === 84) {
-					void chrome.runtime.sendMessage({type: 'NOTIFY_BAN'});
-					const endAt = Date.now() + (RATE_LIMIT_COOLDOWN_SECONDS * 1000);
-					let remaining = RATE_LIMIT_COOLDOWN_SECONDS;
-					while (remaining > 0 && !isStopRequested) {
-						updateUi(
-							dashboard,
-							report,
-							packageId,
-							`<div style="background: rgba(229, 64, 34, 0.2); border: 1px solid #e54022; padding: 8px; border-radius: 4px; color: #e54022; margin-bottom: 10px; text-align: center; font-size: 12px;">
-								🛑 Rate limit exceeded (Code 84). Waiting ${formatTime(remaining)} before retry.
-							</div>`,
-							currentTitle,
-						);
-						// eslint-disable-next-line no-await-in-loop
-						await sleep(500);
-						remaining = Math.ceil((endAt - Date.now()) / 1000);
-					}
-
-					if (isStopRequested) {
-						return {reason: 'ERROR', details: 'Stopped by user during rate-limit cooldown.'};
-					}
-
-					continue;
-				}
-
-				return {reason: 'ERROR', details: `Steam returned code ${String(payload.success ?? 'unknown')}.`};
-			}
-
-			if (response.status === 429) {
-				const retryAfterHeader = response.headers.get('Retry-After');
-				let waitTime = Number(retryAfterHeader ?? '');
-				if (!Number.isFinite(waitTime) || waitTime <= 0) {
-					waitTime = DEFAULT_RETRY_AFTER_SECONDS;
-				}
-
-				const endAt = Date.now() + (waitTime * 1000);
-				let remaining = waitTime;
-				while (remaining > 0 && !isStopRequested) {
-					updateUi(
-						dashboard,
-						report,
-						packageId,
-						`<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
-							⚠️ HTTP 429. Waiting ${formatTime(remaining)} before retry.
-						</div>`,
-						currentTitle,
-					);
-					// eslint-disable-next-line no-await-in-loop
-					await sleep(500);
-					remaining = Math.ceil((endAt - Date.now()) / 1000);
-				}
-
-				if (isStopRequested) {
-					return {reason: 'ERROR', details: 'Stopped by user during rate-limit cooldown.'};
-				}
-
+			// eslint-disable-next-line no-await-in-loop
+			const outcome = await handleRemoveLicenseResponse(response, startedAt, packageId, ctx);
+			if (outcome.action === 'continue') {
 				continue;
 			}
 
-			return {reason: 'ERROR', details: `HTTP ${response.status}.`};
+			return outcome.result;
 		} catch (error) {
 			networkRetries++;
 			console.error(`Network error while deleting ${packageId} [attempt ${networkRetries}/${MAX_NETWORK_RETRIES}]:`, error);
@@ -759,6 +784,151 @@ export function recordDecision(report: ReviewReport, decision: Omit<ItemDecision
 	}
 }
 
+type ClassificationInput = {
+	packageId: string;
+	link: HTMLAnchorElement | undefined;
+	title: string;
+	rowText: string;
+	protectedIdSet: Set<string>;
+	pythonPearls: Set<string>;
+	attemptedDeletions: Set<string>;
+	protectedTitlePatterns: RegExp[];
+	metadataContext: MetadataContext;
+	dryRun: boolean;
+	sessionId: string | undefined;
+	ctx: RequestContext;
+};
+
+async function classifyPackageDecision(input: ClassificationInput): Promise<{decision: Omit<ItemDecision, 'timestamp'>; isCacheDirty: boolean}> {
+	const {
+		packageId, link, title, rowText,
+		protectedIdSet, pythonPearls, attemptedDeletions, protectedTitlePatterns,
+		metadataContext, dryRun: isDryRun, sessionId, ctx,
+	} = input;
+
+	if (protectedIdSet.has(packageId)) {
+		return {
+			decision: {
+				packageId, title,
+				reason: 'SKIP_ALLOWLIST_ID',
+				details: 'Skipped: package is explicitly protected.',
+			},
+			isCacheDirty: false,
+		};
+	}
+
+	if (link === undefined) {
+		return {
+			decision: {
+				packageId, title,
+				reason: 'SKIP_NOT_ON_PAGE',
+				details: 'Skipped: package ID is not currently listed on this page.',
+			},
+			isCacheDirty: false,
+		};
+	}
+
+	if (attemptedDeletions.has(packageId)) {
+		return {
+			decision: {
+				packageId, title,
+				reason: 'SKIP_ZOMBIE',
+				details: '🧟 Zombie licence: Steam silently blocked deletion. Permanently ignored.',
+			},
+			isCacheDirty: false,
+		};
+	}
+
+	if (isProtectedLicense(rowText)) {
+		return {
+			decision: {
+				packageId, title,
+				reason: 'SKIP_PROTECTED_KEYWORD',
+				details: 'Skipped: matched built-in DLC/soundtrack/expansion safeguards.',
+			},
+			isCacheDirty: false,
+		};
+	}
+
+	if (pythonPearls.has(packageId)) {
+		return {
+			decision: {
+				packageId, title,
+				reason: 'SKIP_HIDDEN_GEM',
+				details: 'Protected by Python import (pre-analysed pearl).',
+			},
+			isCacheDirty: false,
+		};
+	}
+
+	const matchingPattern = protectedTitlePatterns.find(pattern => pattern.test(rowText));
+	if (matchingPattern !== undefined) {
+		return {
+			decision: {
+				packageId, title,
+				reason: 'SKIP_ALLOWLIST_PATTERN',
+				details: `Skipped: matched protected title pattern "${matchingPattern.source}".`,
+			},
+			isCacheDirty: false,
+		};
+	}
+
+	// Always evaluate hidden gem protection first, regardless of dry run mode,
+	// so the dashboard shows which titles would be protected by metadata checks.
+	const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext, ctx);
+	if (hiddenGem.reason !== undefined) {
+		return {
+			decision: {
+				packageId, title,
+				reason: hiddenGem.reason,
+				details: hiddenGem.details,
+			},
+			isCacheDirty: true,
+		};
+	}
+
+	if (isDryRun) {
+		return {
+			decision: {
+				packageId, title,
+				reason: 'DELETE',
+				details: 'Dry run: would send delete request.',
+			},
+			isCacheDirty: true,
+		};
+	}
+
+	const removalResult = await deletePackageWithRetry(packageId, sessionId!, ctx);
+	if (removalResult.reason === 'DELETE') {
+		const row = link.closest('tr');
+		if (row !== null) {
+			row.style.display = 'none';
+		}
+
+		// Record the deletion attempt so that if the licence reappears on the
+		// next run (zombie), we can detect it and stop wasting rate-limit tokens.
+		attemptedDeletions.add(packageId);
+		await new Promise<void>(resolve => {
+			chrome.storage.local.set({[CACHE_ATTEMPTED_DELETIONS_KEY]: [...attemptedDeletions]}, () => {
+				if (chrome.runtime.lastError) {
+					console.error('attemptedDeletions write failed:', chrome.runtime.lastError.message);
+				}
+
+				resolve();
+			});
+		});
+	}
+
+	return {
+		decision: {
+			packageId, title,
+			reason: removalResult.reason,
+			details: removalResult.details,
+		},
+		isCacheDirty: true,
+	};
+}
+
 async function removeTrashLicenses({
 	ids,
 	protectedIds,
@@ -793,7 +963,7 @@ async function removeTrashLicenses({
 	};
 
 	const dashboard = createDashboard();
-	updateUi(dashboard, report, undefined);
+	updateUi({dashboard, report}, undefined);
 
 	// Load persistent caches from storage instead of starting with empty Maps
 	const metadataContext = await loadPersistentContext();
@@ -818,11 +988,7 @@ async function removeTrashLicenses({
 			});
 		}
 
-		updateUi(dashboard, report, undefined, `
-			<div style="background: rgba(229, 64, 34, 0.2); border: 1px solid #e54022; padding: 8px; border-radius: 4px; color: #e54022; margin-bottom: 10px; text-align: center; font-size: 12px;">
-				❌ Could not find Steam session ID. Reload and retry.
-			</div>
-		`);
+		updateUi({dashboard, report}, undefined, statusBanner('error', '❌ Could not find Steam session ID. Reload and retry.'));
 		return;
 	}
 
@@ -838,107 +1004,15 @@ async function removeTrashLicenses({
 		const title = link === undefined ? `Package ${packageId}` : extractTitle(link, packageId);
 		const rowText = link?.closest('tr')?.textContent ?? '';
 
-		let decision: Omit<ItemDecision, 'timestamp'>;
-		if (protectedIdSet.has(packageId)) {
-			decision = {
-				packageId,
-				title,
-				reason: 'SKIP_ALLOWLIST_ID',
-				details: 'Skipped: package is explicitly protected.',
-			};
-		} else if (link === undefined) {
-			decision = {
-				packageId,
-				title,
-				reason: 'SKIP_NOT_ON_PAGE',
-				details: 'Skipped: package ID is not currently listed on this page.',
-			};
-		} else if (attemptedDeletions.has(packageId)) {
-			// Zombie detected: Steam previously confirmed deletion (success: 1) but the licence is still present.
-			// Steam silently rejects the deletion in its database; we must never retry to avoid burning rate-limit attempts.
-			decision = {
-				packageId,
-				title,
-				reason: 'SKIP_ZOMBIE',
-				details: '🧟 Zombie licence: Steam silently blocked deletion. Permanently ignored.',
-			};
-		} else if (isProtectedLicense(rowText)) {
-			decision = {
-				packageId,
-				title,
-				reason: 'SKIP_PROTECTED_KEYWORD',
-				details: 'Skipped: matched built-in DLC/soundtrack/expansion safeguards.',
-			};
-		} else if (pythonPearls.has(packageId)) {
-			// Python-script pre-analysis identified this as a keeper
-			decision = {
-				packageId,
-				title,
-				reason: 'SKIP_HIDDEN_GEM',
-				details: 'Protected by Python import (pre-analysed pearl).',
-			};
-		} else {
-			const matchingPattern = protectedTitlePatterns.find(pattern => pattern.test(rowText));
-			if (matchingPattern === undefined) {
-				// Always evaluate hidden gem protection first, regardless of dry run mode,
-				// so the dashboard shows which titles would be protected by metadata checks.
-				// eslint-disable-next-line no-await-in-loop
-				const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext, {dashboard, report, currentTitle: title});
-				isMetadataCacheDirty = true;
-
-				if (hiddenGem.reason !== undefined) {
-					decision = {
-						packageId,
-						title,
-						reason: hiddenGem.reason,
-						details: hiddenGem.details,
-					};
-				} else if (dryRun) {
-					decision = {
-						packageId,
-						title,
-						reason: 'DELETE',
-						details: 'Dry run: would send delete request.',
-					};
-				} else {
-					// eslint-disable-next-line no-await-in-loop
-					const removalResult = await deletePackageWithRetry(packageId, sessionId!, {dashboard, report, currentTitle: title});
-					decision = {
-						packageId,
-						title,
-						reason: removalResult.reason,
-						details: removalResult.details,
-					};
-
-					if (removalResult.reason === 'DELETE') {
-						const row = link.closest('tr');
-						if (row !== null) {
-							row.style.display = 'none';
-						}
-
-						// Record the deletion attempt so that if the licence reappears on the
-						// next run (zombie), we can detect it and stop wasting rate-limit tokens.
-						attemptedDeletions.add(packageId);
-						// eslint-disable-next-line no-await-in-loop
-						await new Promise<void>(resolve => {
-							chrome.storage.local.set({[CACHE_ATTEMPTED_DELETIONS_KEY]: [...attemptedDeletions]}, () => {
-								if (chrome.runtime.lastError) {
-									console.error('attemptedDeletions write failed:', chrome.runtime.lastError.message);
-								}
-
-								resolve();
-							});
-						});
-					}
-				}
-			} else {
-				decision = {
-					packageId,
-					title,
-					reason: 'SKIP_ALLOWLIST_PATTERN',
-					details: `Skipped: matched protected title pattern "${matchingPattern.source}".`,
-				};
-			}
+		// eslint-disable-next-line no-await-in-loop
+		const {decision, isCacheDirty} = await classifyPackageDecision({
+			packageId, link, title, rowText,
+			protectedIdSet, pythonPearls, attemptedDeletions, protectedTitlePatterns,
+			metadataContext, dryRun, sessionId,
+			ctx: {dashboard, report, currentTitle: title},
+		});
+		if (isCacheDirty) {
+			isMetadataCacheDirty = true;
 		}
 
 		recordDecision(report, decision);
@@ -950,7 +1024,7 @@ async function removeTrashLicenses({
 
 		const now = performance.now();
 		if (now - report.lastRenderAt >= RENDER_THROTTLE_MS) {
-			updateUi(dashboard, report, packageId, '', title);
+			updateUi({dashboard, report, currentTitle: title}, packageId);
 			report.lastRenderAt = now;
 		}
 	}
@@ -960,16 +1034,11 @@ async function removeTrashLicenses({
 	}
 
 	updateUi(
-		dashboard,
-		report,
+		{dashboard, report},
 		undefined,
 		didStop
-			? `<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
-				⏹ Stopped by user.
-			</div>`
-			: `<div style="background: rgba(164, 208, 7, 0.1); border: 1px solid #a4d007; padding: 8px; border-radius: 4px; color: #a4d007; margin-bottom: 10px; text-align: center; font-size: 12px;">
-				✅ ${dryRun ? 'Dry run complete' : 'Cleanup complete'}.
-			</div>`,
+			? statusBanner('warning', '⏹ Stopped by user.')
+			: statusBanner('success', `✅ ${dryRun ? 'Dry run complete' : 'Cleanup complete'}.`),
 	);
 }
 
