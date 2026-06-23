@@ -63,6 +63,7 @@ export type MetadataContext = {
 export type RequestContext = {
 	dashboard: HTMLDivElement;
 	report: ReviewReport;
+	currentTitle?: string;
 };
 
 type SkipReason = Exclude<DecisionReason, 'DELETE' | 'ERROR'>;
@@ -138,7 +139,7 @@ function createDashboard(): HTMLDivElement {
 		padding: 20px; border-radius: 8px;
 		box-shadow: 0 10px 25px rgba(0,0,0,0.9);
 		font-family: Arial, sans-serif; z-index: 999999;
-		border: 1px solid #2a475e; width: 440px;
+		border: 1px solid #1a9bdc; box-shadow: 0 0 18px rgba(26,155,220,0.25), 0 10px 25px rgba(0,0,0,0.9); width: 440px;
 	`;
 	document.body.append(dashboard);
 	return dashboard;
@@ -154,8 +155,13 @@ export function escapeHtml(value: string): string {
 }
 
 export function extractTitle(link: HTMLAnchorElement, packageId: string): string {
+	const match = /RemoveFreeLicense\(\s*\d+,\s*'(?<title>[^']*)'\s*\)/v.exec(link.href);
+	if (match?.groups?.title && match.groups.title.length > 0) {
+		return match.groups.title;
+	}
+
 	const row = link.closest('tr');
-	const text = row?.querySelector('td')?.textContent?.trim() ?? row?.textContent?.trim() ?? '';
+	const text = row?.querySelector('td:nth-child(2)')?.textContent?.trim() ?? row?.textContent?.trim() ?? '';
 	return text.length > 0 ? text : `Package ${packageId}`;
 }
 
@@ -202,6 +208,7 @@ function updateUi(
 	report: ReviewReport,
 	currentId: string | undefined,
 	statusMessage = '',
+	currentTitle?: string,
 ): void {
 	const percent = report.totalCandidates === 0
 		? '100.0'
@@ -233,13 +240,11 @@ function updateUi(
 	// Display newest items first (reverse order)
 	const totalItems = report.items.length;
 
-	const lastItem = report.items.at(-1);
-	const currentTitle = lastItem !== undefined && lastItem.packageId === currentId
-		? lastItem.title
-		: undefined;
 	const currentDisplay = currentId === undefined
 		? '---'
-		: (currentTitle === undefined ? escapeHtml(currentId) : `${escapeHtml(currentId)} — ${escapeHtml(currentTitle)}`);
+		: currentTitle !== undefined
+			? `<strong>${escapeHtml(currentId)}</strong> <span style="color:#8f98a0">—</span> <span style="display:inline-block; max-width:260px; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; white-space:nowrap;">${escapeHtml(currentTitle)}</span>`
+			: `<strong>${escapeHtml(currentId)}</strong>`;
 
 	dashboard.innerHTML = `
 		<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -373,6 +378,7 @@ async function fetchJsonWithRetry(
 						`<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
 							⚠️ Store API rate-limited (429). Waiting ${remaining}s before retry...
 						</div>`,
+						ctx.currentTitle,
 					);
 					// eslint-disable-next-line no-await-in-loop
 					await sleep(500);
@@ -582,9 +588,9 @@ export async function evaluateHiddenGemProtection(
 async function deletePackageWithRetry(
 	packageId: string,
 	sessionId: string,
-	dashboard: HTMLDivElement,
-	report: ReviewReport,
+	ctx: RequestContext,
 ): Promise<{reason: DecisionReason; details?: string}> {
+	const {dashboard, report, currentTitle} = ctx;
 	const formData = new URLSearchParams();
 	formData.append('sessionid', sessionId);
 	formData.append('packageid', packageId);
@@ -632,6 +638,7 @@ async function deletePackageWithRetry(
 							`<div style="background: rgba(229, 64, 34, 0.2); border: 1px solid #e54022; padding: 8px; border-radius: 4px; color: #e54022; margin-bottom: 10px; text-align: center; font-size: 12px;">
 								🛑 Rate limit exceeded (Code 84). Waiting ${remaining}s before retry.
 							</div>`,
+							currentTitle,
 						);
 						// eslint-disable-next-line no-await-in-loop
 						await sleep(500);
@@ -665,6 +672,7 @@ async function deletePackageWithRetry(
 						`<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
 							⚠️ HTTP 429. Waiting ${remaining}s before retry.
 						</div>`,
+						currentTitle,
 					);
 					// eslint-disable-next-line no-await-in-loop
 					await sleep(500);
@@ -860,7 +868,7 @@ async function removeTrashLicenses({
 				// Always evaluate hidden gem protection first, regardless of dry run mode,
 				// so the dashboard shows which titles would be protected by metadata checks.
 				// eslint-disable-next-line no-await-in-loop
-				const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext, {dashboard, report});
+				const hiddenGem = await evaluateHiddenGemProtection(packageId, link, metadataContext, {dashboard, report, currentTitle: title});
 				isMetadataCacheDirty = true;
 
 				if (hiddenGem.reason !== undefined) {
@@ -879,7 +887,7 @@ async function removeTrashLicenses({
 					};
 				} else {
 					// eslint-disable-next-line no-await-in-loop
-					const removalResult = await deletePackageWithRetry(packageId, sessionId!, dashboard, report);
+					const removalResult = await deletePackageWithRetry(packageId, sessionId!, {dashboard, report, currentTitle: title});
 					decision = {
 						packageId,
 						title,
@@ -927,7 +935,7 @@ async function removeTrashLicenses({
 
 		const now = performance.now();
 		if (now - report.lastRenderAt >= RENDER_THROTTLE_MS) {
-			updateUi(dashboard, report, packageId);
+			updateUi(dashboard, report, packageId, '', title);
 			report.lastRenderAt = now;
 		}
 	}

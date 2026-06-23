@@ -180,6 +180,7 @@ function App() {
 	};
 
 	return (
+		<div style={{background: 'linear-gradient(135deg, #1a9bdc, #66c0f4, #2a475e)', padding: 1}}>
 		<div style={{
 			width: 360, padding: 16, fontFamily: 'Arial, sans-serif', background: '#171a21', color: '#c6d4df', minHeight: 300,
 		}}>
@@ -359,6 +360,7 @@ function App() {
 					{status}
 				</p>
 			)}
+		</div>
 		</div>
 	);
 }

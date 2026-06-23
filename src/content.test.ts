@@ -149,45 +149,43 @@ describe('extractTitle', () => {
 		document.body.innerHTML = '';
 	});
 
-	it('returns the text of the first td when the link is inside a table row', () => {
+	it('extracts the title from the href second argument', () => {
 		document.body.innerHTML = `
 			<table><tbody><tr>
-				<td>My Awesome Game</td>
-				<td><a href="javascript:RemoveFreeLicense(1,'x')">Remove</a></td>
+				<td>12 Apr, 2026</td>
+				<td><a href="javascript:RemoveFreeLicense(1,'My Awesome Game')">Remove</a></td>
 			</tr></tbody></table>
 		`;
 		const link = document.querySelector<HTMLAnchorElement>('a')!;
 		expect(extractTitle(link, '1')).toBe('My Awesome Game');
 	});
 
-	it('uses the first td text content as the title', () => {
+	it('falls back to the second td when the href title is empty', () => {
 		document.body.innerHTML = `
 			<table><tbody><tr>
-				<td>First Cell</td>
-				<td>Second Cell <a href="javascript:RemoveFreeLicense(2,'x')">Remove</a></td>
+				<td>12 Apr, 2026</td>
+				<td>Second Cell <a href="javascript:RemoveFreeLicense(2,'')">Remove</a></td>
 			</tr></tbody></table>
 		`;
 		const link = document.querySelector<HTMLAnchorElement>('a')!;
-		// ExtractTitle reads the first td, which is "First Cell"
-		expect(extractTitle(link, '2')).toBe('First Cell');
+		expect(extractTitle(link, '2')).toBe('Second Cell Remove');
 	});
 
-	it('returns "Package <id>" when the row text is entirely whitespace', () => {
+	it('returns "Package <id>" when the href title is empty and the row text is whitespace', () => {
 		document.body.innerHTML = `
 			<table><tbody><tr>
 				<td>   </td>
-				<td><a href="javascript:RemoveFreeLicense(3,'x')">   </a></td>
+				<td><a href="javascript:RemoveFreeLicense(3,'')">   </a></td>
 			</tr></tbody></table>
 		`;
 		const link = document.querySelector<HTMLAnchorElement>('a')!;
-		// First td trims to '' and row text is all whitespace — falls back to fallback.
 		expect(extractTitle(link, '3')).toBe('Package 3');
 	});
 
-	it('returns "Package <id>" when the link has no closest tr', () => {
+	it('returns "Package <id>" when the link has no closest tr and the href title is empty', () => {
 		const link = document.createElement('a');
 		// eslint-disable-next-line no-script-url
-		link.href = 'javascript:RemoveFreeLicense(42,\'x\')';
+		link.href = 'javascript:RemoveFreeLicense(42,\'\')';
 		document.body.append(link);
 		expect(extractTitle(link, '42')).toBe('Package 42');
 	});
