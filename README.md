@@ -1,14 +1,46 @@
 # Steam Weed Wacker
 
+![TypeScript](https://img.shields.io/badge/TypeScript-dominant-3178c6?logo=typescript&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-8-646cff?logo=vite&logoColor=white)
+![Chrome Extension](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3-4285f4?logo=googlechrome&logoColor=white)
+![License: Unlicense](https://img.shields.io/badge/license-Unlicense-lightgrey)
+
 A safety-first Chrome extension for cleaning up unwanted Steam licenses from your account page.
 
-Steam Weed Wacker helps you take a large list of free-package IDs, compare them against the licenses currently shown on your Steam account, and then either preview or execute a cleanup workflow with multiple layers of protection.
+Steam Weed Wacker helps you take large lists of free-package IDs, compare them against the licenses currently shown on your Steam account, and then either preview or execute a cleanup workflow with multiple layers of protection.
+
+> Built for careful cleanup — not reckless deletion.
+
+---
+
+## Table of Contents
+
+- [Why this project exists](#why-this-project-exists)
+- [What it does](#what-it-does)
+- [Screenshots](#screenshots)
+- [Safety-first design](#safety-first-design)
+- [How it works](#how-it-works)
+- [Feature highlights](#feature-highlights)
+- [Tech stack](#tech-stack)
+- [Language composition](#language-composition)
+- [Project structure](#project-structure)
+- [Installation](#installation)
+- [Load the extension in Chrome](#load-the-extension-in-chrome)
+- [Available scripts](#available-scripts)
+- [Using the extension](#using-the-extension)
+- [Permissions used](#permissions-used)
+- [Testing](#testing)
+- [Important notes and cautions](#important-notes-and-cautions)
+- [Roadmap ideas](#roadmap-ideas)
+- [License](#license)
+- [Acknowledgements](#acknowledgements)
 
 ## Why this project exists
 
-If you have claimed lots of free packages over time, your Steam licenses page can become crowded with trials, promos, delisted freebies, and other account clutter. Steam Weed Wacker is built to help sort through that noise while reducing the risk of removing something valuable by mistake.
+If you have claimed lots of free packages over time, your Steam licenses page can become crowded with trials, promos, delisted freebies, and other account clutter. Steam Weed Wacker is designed to help sort through that noise while reducing the risk of removing something valuable by mistake.
 
-The project is inspired by package data from [SteamDB Free Packages](https://steamdb.info/freepackages/), and the repository description sums it up well: this is the counter-app companion to that workflow.
+The project is inspired by package data from [SteamDB Free Packages](https://steamdb.info/freepackages/), and the original repository description captures the spirit well: this is the companion cleanup tool for that workflow.
 
 ## What it does
 
@@ -25,9 +57,43 @@ The project is inspired by package data from [SteamDB Free Packages](https://ste
 - Shows progress, status, skip reasons, ETA, and per-item decisions in a live dashboard
 - Handles rate limiting with cooldowns, retries, and browser notifications
 
+## Screenshots
+
+> Replace these placeholders with real screenshots or GIFs from the extension.
+
+### Popup UI
+
+```text
+[ Screenshot Placeholder ]
+Steam Weed Wacker popup
+- package ID input
+- protected IDs
+- protected title patterns
+- dry run toggle
+- Python JSON import
+```
+
+### Live cleanup dashboard
+
+```text
+[ Screenshot Placeholder ]
+Injected on-page dashboard
+- progress bar
+- ETA
+- skip reasons
+- per-item decision log
+- stop button
+```
+
+### Suggested GIF ideas
+
+- Dry run walkthrough from popup to dashboard
+- Safe cleanup of a small batch
+- Rate-limit notification and cooldown handling
+
 ## Safety-first design
 
-This project is clearly built around avoiding accidental removals.
+This project is intentionally built around preventing accidental removals.
 
 Steam Weed Wacker includes several guardrails:
 
@@ -67,7 +133,7 @@ The extension is a Manifest V3 browser extension built with React, TypeScript, a
   Handles notifications and cooldown alarms when Steam rate limits the workflow.
 
 - **Utility helpers (`src/utils.ts`)**  
-  Parses IDs and patterns, detects protected content, formats ETA text, extracts the Steam session ID, and evaluates hidden-gem rules.
+  Parse IDs and patterns, detect protected content, format ETA text, extract the Steam session ID, and evaluate hidden-gem rules.
 
 ## Feature highlights
 
@@ -155,13 +221,32 @@ This matches the project structure: a TypeScript-heavy extension with a React po
 
 - Node.js
 - npm
-- A Chromium-based browser that supports Manifest V3 extensions
+- Google Chrome or another Chromium-based browser with Manifest V3 support
 
 ### Setup
 
 ```bash
 npm install
+npm run build
 ```
+
+This installs dependencies and produces the build output you can load into your browser.
+
+## Load the extension in Chrome
+
+After building the project, load it as an unpacked extension:
+
+1. Open Chrome and go to `chrome://extensions/`
+2. Enable **Developer mode** in the top-right corner
+3. Click **Load unpacked**
+4. Select the project’s built extension directory
+5. Confirm the extension appears in your installed extensions list
+6. Pin the extension for easier access if desired
+7. Open your Steam licenses page:
+   `https://store.steampowered.com/account/licenses/`
+8. Click the extension icon to open Steam Weed Wacker
+
+> If the popup cannot reach the Steam tab, reload the Steam licenses page and try again.
 
 ## Available scripts
 
@@ -191,16 +276,15 @@ npm run test:coverage
 
 ### Basic workflow
 
-1. Build or otherwise prepare the extension bundle.
-2. Load the extension into your browser as an unpacked extension.
-3. Open your Steam licenses page:
+1. Load the extension into your browser.
+2. Open your Steam licenses page:
    `https://store.steampowered.com/account/licenses/`
-4. Open the Steam Weed Wacker popup.
-5. Paste candidate package IDs from SteamDB or click **Copy All Page IDs**.
-6. Add any protected IDs or title patterns.
-7. Leave **Dry Run** enabled and start a test pass.
-8. Review the results in the on-page dashboard.
-9. Only then disable dry run if you intentionally want to execute removals.
+3. Open the Steam Weed Wacker popup.
+4. Paste candidate package IDs from SteamDB or click **Copy All Page IDs**.
+5. Add any protected IDs or title patterns.
+6. Leave **Dry Run** enabled and start a test pass.
+7. Review the results in the on-page dashboard.
+8. Only then disable dry run if you intentionally want to execute removals.
 
 ### Recommended safe workflow
 
@@ -210,13 +294,24 @@ npm run test:coverage
 - Review hidden-gem skips instead of forcing deletion.
 - Expect cooldown delays on larger runs.
 
+### JSON import workflow
+
+If you already have results from an external Python classification script:
+
+1. Copy the contents of `trash_check_progress.json`
+2. Paste the JSON into the popup’s import area
+3. Click **Import data from Python script**
+4. The extension will:
+   - load trash IDs into the main input
+   - preserve “pearl” / keep-worthy entries as permanently protected IDs in local storage
+
 ## Permissions used
 
 From `manifest.json`, the extension uses:
 
-- `notifications` — to alert you about rate-limit pauses and resume windows
-- `storage` — to save package IDs, protection settings, caches, and imported data
-- `alarms` — to schedule cooldown notifications
+- `notifications` — alert you about rate-limit pauses and resume windows
+- `storage` — save package IDs, protection settings, caches, and imported data
+- `alarms` — schedule cooldown notifications
 - host access to Steam store and login domains
 
 ## Testing
@@ -242,6 +337,18 @@ npm run test:coverage
 - Dry run exists for a reason — keep it on until you are fully confident in your inputs.
 - Steam platform behavior may change over time, which can affect selectors, request formats, or license-removal behavior.
 - Some licenses may not behave consistently, which is why the extension includes zombie detection and fail-safe skips.
+- No automation tool can remove all risk; human review is still essential.
+
+## Roadmap ideas
+
+Potential future improvements:
+
+- Real screenshots and animated demo GIFs
+- One-click import from SteamDB exports or copied tables
+- Exportable cleanup reports
+- More advanced pattern management UI
+- Batch presets for known-safe package categories
+- Better historical reporting and run summaries
 
 ## License
 
@@ -250,8 +357,13 @@ This project is released under **The Unlicense**. See [`LICENSE`](./LICENSE) for
 ## Acknowledgements
 
 - [SteamDB Free Packages](https://steamdb.info/freepackages/) for the package discovery workflow that inspired this tool
-- Steam account license management pages, which this extension automates carefully and defensively
+- The Steam account license page, which this extension automates carefully and defensively
 
 ---
 
-If you want, I can also create a second pass that adds badges, screenshots/GIF placeholders, and a more polished “developer setup + load unpacked extension” section.
+If you want, I can also do a final polish pass to add:
+
+- a shorter GitHub-social preview intro
+- a “Contributing” section
+- a “Known limitations” section
+- more exact build-output wording once the extension load path is confirmed
