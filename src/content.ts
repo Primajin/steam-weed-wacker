@@ -41,7 +41,7 @@ type HiddenGemMetadata = {
 	reviewCount: number;
 };
 
-type ReviewReport = {
+export type ReviewReport = {
 	mode: 'DRY_RUN' | 'EXECUTE';
 	totalCandidates: number;
 	processed: number;
@@ -55,12 +55,12 @@ type ReviewReport = {
 	lastRenderAt: number;
 };
 
-type MetadataContext = {
+export type MetadataContext = {
 	packageToAppCache: Map<string, number | undefined>;
 	appMetadataCache: Map<number, HiddenGemMetadata | undefined>;
 };
 
-type RequestContext = {
+export type RequestContext = {
 	dashboard: HTMLDivElement;
 	report: ReviewReport;
 };
@@ -159,13 +159,13 @@ export function extractTitle(link: HTMLAnchorElement, packageId: string): string
 	return text.length > 0 ? text : `Package ${packageId}`;
 }
 
-type EtaStats = {
+export type EtaStats = {
 	avgItemsPerMin: string;
 	etaFormatted: string;
 	rateLimitBreaksText: string;
 };
 
-function computeEtaStats(report: ReviewReport): EtaStats | undefined {
+export function computeEtaStats(report: ReviewReport): EtaStats | undefined {
 	if (report.processed === 0) {
 		return undefined;
 	}
@@ -399,7 +399,7 @@ async function fetchJsonWithRetry(
 	}
 }
 
-function getAppIdFromRow(link: HTMLAnchorElement): number | undefined {
+export function getAppIdFromRow(link: HTMLAnchorElement): number | undefined {
 	const row = link.closest('tr');
 	const appLink = row?.querySelector<HTMLAnchorElement>('a[href*="/app/"]');
 	if (appLink?.href === undefined) {
@@ -415,12 +415,12 @@ function getAppIdFromRow(link: HTMLAnchorElement): number | undefined {
 	return Number.isSafeInteger(appId) && appId > 0 ? appId : undefined;
 }
 
-async function resolveAppIdForPackage(
+export async function resolveAppIdForPackage(
 	packageId: string,
 	link: HTMLAnchorElement,
 	context: MetadataContext,
 	ctx: RequestContext,
-): Promise<number | undefined | 'dead'> {
+): Promise<number | undefined | 'dead' | 'error'> {
 	if (context.packageToAppCache.has(packageId)) {
 		return context.packageToAppCache.get(packageId);
 	}
@@ -432,8 +432,9 @@ async function resolveAppIdForPackage(
 	}
 
 	try {
+		const params = new URLSearchParams({packageids: packageId});
 		const response = await fetchJsonWithRetry(
-			`https://store.steampowered.com/api/packagedetails?packageids=${packageId}`,
+			`https://store.steampowered.com/api/packagedetails?${params}`,
 			packageId,
 			ctx,
 		);
@@ -456,12 +457,12 @@ async function resolveAppIdForPackage(
 		context.packageToAppCache.set(packageId, normalizedAppId);
 		return normalizedAppId;
 	} catch {
-		context.packageToAppCache.set(packageId, undefined);
-		return undefined;
+		// Do not cache transient network errors — the next run may succeed.
+		return 'error';
 	}
 }
 
-async function getHiddenGemMetadata(
+export async function getHiddenGemMetadata(
 	appId: number,
 	packageId: string,
 	context: MetadataContext,
@@ -472,8 +473,9 @@ async function getHiddenGemMetadata(
 	}
 
 	try {
+		const appDetailsParams = new URLSearchParams({appids: String(appId), filters: 'is_free,type'});
 		const appDetailsResponse = await fetchJsonWithRetry(
-			`https://store.steampowered.com/api/appdetails?appids=${appId}&filters=is_free,type`,
+			`https://store.steampowered.com/api/appdetails?${appDetailsParams}`,
 			packageId,
 			ctx,
 		);
@@ -495,8 +497,15 @@ async function getHiddenGemMetadata(
 			return metadata;
 		}
 
+		const reviewsParams = new URLSearchParams({
+			json: '1',
+			language: 'all',
+			purchase_type: 'all',
+			num_per_page: '0',
+			filter: 'summary',
+		});
 		const reviewsResponse = await fetchJsonWithRetry(
-			`https://store.steampowered.com/appreviews/${appId}?json=1&language=all&purchase_type=all&num_per_page=0&filter=summary`,
+			`https://store.steampowered.com/appreviews/${appId}?${reviewsParams}`,
 			packageId,
 			ctx,
 		);
@@ -528,13 +537,17 @@ async function getHiddenGemMetadata(
 	}
 }
 
-async function evaluateHiddenGemProtection(
+export async function evaluateHiddenGemProtection(
 	packageId: string,
 	link: HTMLAnchorElement,
 	context: MetadataContext,
 	ctx: RequestContext,
 ): Promise<{reason?: DecisionReason; details?: string}> {
 	const appId = await resolveAppIdForPackage(packageId, link, context, ctx);
+
+	if (appId === 'error') {
+		return {reason: 'SKIP_METADATA_UNAVAILABLE', details: 'Network error resolving app ID (fail-safe skip).'};
+	}
 
 	// Dead/removed packages (Steam returned success:false) cannot be hidden gems —
 	// they have no active store presence to protect, so allow deletion.
@@ -928,31 +941,25 @@ let isRunning = false;
 let isStopRequested = false;
 
 function registerMessageListeners(): void {
-	// Listen for messages from the popup to start the cleanup
-	chrome.runtime.onMessage.addListener((request: StartRemovalMessage) => {
-		if (request.type !== 'START_REMOVAL' || !Array.isArray(request.ids)) {
-			return;
+	chrome.runtime.onMessage.addListener((
+		request: StartRemovalMessage | GetPageIdsMessage,
+		_sender,
+		sendResponse: (response: GetPageIdsResponse) => void,
+	) => {
+		if (request.type === 'START_REMOVAL') {
+			if (!Array.isArray(request.ids) || isRunning) {
+				return;
+			}
+
+			isRunning = true;
+			isStopRequested = false;
+			void removeTrashLicenses(request).finally(() => {
+				isRunning = false;
+			});
+		} else if (request.type === 'GET_PAGE_IDS') {
+			const ids = Array.from(buildLinkMap().keys());
+			sendResponse({ids});
 		}
-
-		if (isRunning) {
-			return;
-		}
-
-		isRunning = true;
-		isStopRequested = false;
-		void removeTrashLicenses(request).finally(() => {
-			isRunning = false;
-		});
-	});
-
-	// Listen for requests to extract all package IDs currently on the page
-	chrome.runtime.onMessage.addListener((request: GetPageIdsMessage, _sender, sendResponse: (response: GetPageIdsResponse) => void) => {
-		if (request.type !== 'GET_PAGE_IDS') {
-			return;
-		}
-
-		const ids = buildLinkMap().keys().toArray();
-		sendResponse({ids});
 	});
 }
 
