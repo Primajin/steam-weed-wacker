@@ -30,7 +30,7 @@ function App() {
 				setIsDryRun((result[DRY_RUN_STORAGE_KEY] as boolean | undefined) ?? true);
 			},
 		);
-	}, []); // eslint-disable-line react-hooks/exhaustive-deps
+	}, []); // Empty deps array: run once on mount.
 
 	const handleSave = () => {
 		const ids = parsePackageIds(inputIds);
@@ -181,186 +181,186 @@ function App() {
 
 	return (
 		<div style={{background: 'linear-gradient(135deg, #1a9bdc, #66c0f4, #2a475e)', padding: 1}}>
-		<div style={{
-			width: 360, padding: 16, fontFamily: 'Arial, sans-serif', background: '#171a21', color: '#c6d4df', minHeight: 300,
-		}}>
-			<h2 style={{
-				margin: '0 0 12px 0', color: '#66c0f4', fontSize: 18, textTransform: 'uppercase', letterSpacing: 1,
+			<div style={{
+				width: 360, padding: 16, fontFamily: 'Arial, sans-serif', background: '#171a21', color: '#c6d4df', minHeight: 300,
 			}}>
-				🧹 Steam Weed Wacker
-			</h2>
-
-			<div style={{marginBottom: 15, borderBottom: '1px solid #2a475e', paddingBottom: 15}}>
-				<label style={{
-					display: 'block', fontSize: 12, color: '#66c0f4', marginBottom: 5, fontWeight: 'bold',
+				<h2 style={{
+					margin: '0 0 12px 0', color: '#66c0f4', fontSize: 18, textTransform: 'uppercase', letterSpacing: 1,
 				}}>
-					🐍 Python Progress Import (trash_check_progress.json)
+					🧹 Steam Weed Wacker
+				</h2>
+
+				<div style={{marginBottom: 15, borderBottom: '1px solid #2a475e', paddingBottom: 15}}>
+					<label style={{
+						display: 'block', fontSize: 12, color: '#66c0f4', marginBottom: 5, fontWeight: 'bold',
+					}}>
+						🐍 Python Progress Import (trash_check_progress.json)
+					</label>
+					<textarea
+						placeholder='Paste the full content of your JSON file here...'
+						value={rawJsonImport}
+						onChange={event => {
+							setRawJsonImport(event.target.value);
+						}}
+						rows={3}
+						style={{
+							width: '100%',
+							boxSizing: 'border-box',
+							background: '#141f2c',
+							border: '1px solid #2a475e',
+							color: '#c6d4df',
+							borderRadius: 4,
+							padding: 6,
+							fontSize: 11,
+							fontFamily: 'monospace',
+							resize: 'vertical',
+						}}
+					/>
+					<button onClick={handlePythonImport} style={{...btnStyle('#a4d007'), marginTop: 5, width: '100%'}}>
+						📥 Import data from Python script
+					</button>
+				</div>
+
+				<p style={{fontSize: 12, color: '#8f98a0', margin: '0 0 10px 0'}}>
+					Paste your trash package IDs below (one per line or comma-separated).
+					You can get these from{' '}
+					<a
+						href='https://steamdb.info/freepackages/'
+						target='_blank'
+						rel='noreferrer'
+						style={{color: '#66c0f4'}}
+					>
+						SteamDB Free Packages
+					</a>
+					.
+				</p>
+
+				<textarea
+					value={inputIds}
+					onChange={event => {
+						setInputIds(event.target.value);
+					}}
+					placeholder='12345&#10;67890&#10;...'
+					rows={8}
+					style={{
+						width: '100%',
+						boxSizing: 'border-box',
+						background: '#1b2838',
+						border: '1px solid #2a475e',
+						color: '#c6d4df',
+						borderRadius: 4,
+						padding: 8,
+						fontSize: 13,
+						resize: 'vertical',
+						fontFamily: 'monospace',
+					}}
+				/>
+
+				<label
+					htmlFor='protected-ids'
+					style={{
+						display: 'block', fontSize: 12, marginTop: 10, marginBottom: 4, color: '#8f98a0',
+					}}
+				>
+					Protected IDs (never touch)
 				</label>
 				<textarea
-					placeholder='Paste the full content of your JSON file here...'
-					value={rawJsonImport}
+					id='protected-ids'
+					value={protectedIdsInput}
 					onChange={event => {
-						setRawJsonImport(event.target.value);
+						setProtectedIdsInput(event.target.value);
 					}}
+					placeholder='730&#10;570'
 					rows={3}
 					style={{
 						width: '100%',
 						boxSizing: 'border-box',
-						background: '#141f2c',
+						background: '#1b2838',
 						border: '1px solid #2a475e',
 						color: '#c6d4df',
 						borderRadius: 4,
-						padding: 6,
-						fontSize: 11,
-						fontFamily: 'monospace',
+						padding: 8,
+						fontSize: 13,
 						resize: 'vertical',
+						fontFamily: 'monospace',
 					}}
 				/>
-				<button onClick={handlePythonImport} style={{...btnStyle('#a4d007'), marginTop: 5, width: '100%'}}>
-					📥 Import data from Python script
-				</button>
-			</div>
 
-			<p style={{fontSize: 12, color: '#8f98a0', margin: '0 0 10px 0'}}>
-				Paste your trash package IDs below (one per line or comma-separated).
-				You can get these from{' '}
-				<a
-					href='https://steamdb.info/freepackages/'
-					target='_blank'
-					rel='noreferrer'
-					style={{color: '#66c0f4'}}
+				<label
+					htmlFor='protected-patterns'
+					style={{
+						display: 'block', fontSize: 12, marginTop: 10, marginBottom: 4, color: '#8f98a0',
+					}}
 				>
-					SteamDB Free Packages
-				</a>
-				.
-			</p>
-
-			<textarea
-				value={inputIds}
-				onChange={event => {
-					setInputIds(event.target.value);
-				}}
-				placeholder='12345&#10;67890&#10;...'
-				rows={8}
-				style={{
-					width: '100%',
-					boxSizing: 'border-box',
-					background: '#1b2838',
-					border: '1px solid #2a475e',
-					color: '#c6d4df',
-					borderRadius: 4,
-					padding: 8,
-					fontSize: 13,
-					resize: 'vertical',
-					fontFamily: 'monospace',
-				}}
-			/>
-
-			<label
-				htmlFor='protected-ids'
-				style={{
-					display: 'block', fontSize: 12, marginTop: 10, marginBottom: 4, color: '#8f98a0',
-				}}
-			>
-				Protected IDs (never touch)
-			</label>
-			<textarea
-				id='protected-ids'
-				value={protectedIdsInput}
-				onChange={event => {
-					setProtectedIdsInput(event.target.value);
-				}}
-				placeholder='730&#10;570'
-				rows={3}
-				style={{
-					width: '100%',
-					boxSizing: 'border-box',
-					background: '#1b2838',
-					border: '1px solid #2a475e',
-					color: '#c6d4df',
-					borderRadius: 4,
-					padding: 8,
-					fontSize: 13,
-					resize: 'vertical',
-					fontFamily: 'monospace',
-				}}
-			/>
-
-			<label
-				htmlFor='protected-patterns'
-				style={{
-					display: 'block', fontSize: 12, marginTop: 10, marginBottom: 4, color: '#8f98a0',
-				}}
-			>
-				Protected title patterns (one per line, plain text or /regex/)
-			</label>
-			<textarea
-				id='protected-patterns'
-				value={protectedPatternsInput}
-				onChange={event => {
-					setProtectedPatternsInput(event.target.value);
-				}}
-				placeholder={'Half Life\n/^World of/iu'}
-				rows={4}
-				style={{
-					width: '100%',
-					boxSizing: 'border-box',
-					background: '#1b2838',
-					border: '1px solid #2a475e',
-					color: '#c6d4df',
-					borderRadius: 4,
-					padding: 8,
-					fontSize: 13,
-					resize: 'vertical',
-					fontFamily: 'monospace',
-				}}
-			/>
-
-			<label
-				htmlFor='dry-run'
-				style={{
-					display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 10, color: '#c6d4df',
-				}}
-			>
-				<input
-					id='dry-run'
-					type='checkbox'
-					checked={isDryRun}
+					Protected title patterns (one per line, plain text or /regex/)
+				</label>
+				<textarea
+					id='protected-patterns'
+					value={protectedPatternsInput}
 					onChange={event => {
-						setIsDryRun(event.target.checked);
+						setProtectedPatternsInput(event.target.value);
+					}}
+					placeholder={'Half Life\n/^World of/iu'}
+					rows={4}
+					style={{
+						width: '100%',
+						boxSizing: 'border-box',
+						background: '#1b2838',
+						border: '1px solid #2a475e',
+						color: '#c6d4df',
+						borderRadius: 4,
+						padding: 8,
+						fontSize: 13,
+						resize: 'vertical',
+						fontFamily: 'monospace',
 					}}
 				/>
-				Dry Run (no deletions)
-			</label>
 
-			<div style={{
-				display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap',
-			}}>
-				<button onClick={handleStart} disabled={isWorking} style={btnStyle('#1a9bdc')}>
-					▶ {isDryRun ? 'Start Dry Run' : 'Start Cleanup'}
-				</button>
-				<button onClick={handleCopyPageIds} style={btnStyle('#2a475e')}>
-					📋 Copy All Page IDs
-				</button>
-				<button onClick={handleSave} style={btnStyle('#2a475e')}>
-					💾 Save IDs
-				</button>
-				<button onClick={handleLoad} style={btnStyle('#2a475e')}>
-					📂 Load IDs
-				</button>
-				<button onClick={handleClear} style={btnStyle('#6b3535')}>
-					🗑 Clear
-				</button>
-			</div>
+				<label
+					htmlFor='dry-run'
+					style={{
+						display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 10, color: '#c6d4df',
+					}}
+				>
+					<input
+						id='dry-run'
+						type='checkbox'
+						checked={isDryRun}
+						onChange={event => {
+							setIsDryRun(event.target.checked);
+						}}
+					/>
+					Dry Run (no deletions)
+				</label>
 
-			{status.length > 0 && (
-				<p style={{
-					fontSize: 12, color: '#a4d007', marginTop: 10, borderTop: '1px solid #2a475e', paddingTop: 8,
+				<div style={{
+					display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap',
 				}}>
-					{status}
-				</p>
-			)}
-		</div>
+					<button onClick={handleStart} disabled={isWorking} style={btnStyle('#1a9bdc')}>
+						▶ {isDryRun ? 'Start Dry Run' : 'Start Cleanup'}
+					</button>
+					<button onClick={handleCopyPageIds} style={btnStyle('#2a475e')}>
+						📋 Copy All Page IDs
+					</button>
+					<button onClick={handleSave} style={btnStyle('#2a475e')}>
+						💾 Save IDs
+					</button>
+					<button onClick={handleLoad} style={btnStyle('#2a475e')}>
+						📂 Load IDs
+					</button>
+					<button onClick={handleClear} style={btnStyle('#6b3535')}>
+						🗑 Clear
+					</button>
+				</div>
+
+				{status.length > 0 && (
+					<p style={{
+						fontSize: 12, color: '#a4d007', marginTop: 10, borderTop: '1px solid #2a475e', paddingTop: 8,
+					}}>
+						{status}
+					</p>
+				)}
+			</div>
 		</div>
 	);
 }

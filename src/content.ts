@@ -156,12 +156,11 @@ export function escapeHtml(value: string): string {
 
 export function extractTitle(link: HTMLAnchorElement, packageId: string): string {
 	const match = /RemoveFreeLicense\(\s*\d+,\s*'(?<title>[^']*)'\s*\)/v.exec(link.href);
-	if (match?.groups?.title && match.groups.title.length > 0) {
+	if (match?.groups?.title !== undefined && match.groups.title.length > 0) {
 		const raw = match.groups.title;
 		try {
-			const decoded = new TextDecoder().decode(
-				Uint8Array.from(atob(raw), c => c.charCodeAt(0)),
-			);
+			// eslint-disable-next-line no-restricted-globals, unicorn/prefer-uint8array-base64 -- Uint8Array.fromBase64 requires Node ≥24; atob is the correct browser API here
+			const decoded = new TextDecoder().decode(Uint8Array.from(atob(raw), c => c.codePointAt(0) ?? 0));
 			if (decoded.length > 0) {
 				return decoded;
 			}
@@ -254,9 +253,9 @@ function updateUi(
 
 	const currentDisplay = currentId === undefined
 		? '---'
-		: currentTitle !== undefined
-			? `<strong>${escapeHtml(currentId)}</strong> <span style="color:#8f98a0">—</span> <span style="display:inline-block; max-width:260px; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; white-space:nowrap;">${escapeHtml(currentTitle)}</span>`
-			: `<strong>${escapeHtml(currentId)}</strong>`;
+		: (currentTitle === undefined
+			? `<strong>${escapeHtml(currentId)}</strong>`
+			: `<strong>${escapeHtml(currentId)}</strong> <span style="color:#8f98a0">—</span> <span style="display:inline-block; max-width:260px; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; white-space:nowrap;">${escapeHtml(currentTitle)}</span>`);
 
 	dashboard.innerHTML = `
 		<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -454,9 +453,9 @@ export async function resolveAppIdForPackage(
 	}
 
 	try {
-		const params = new URLSearchParams({packageids: packageId});
+		const parameters = new URLSearchParams({packageids: packageId});
 		const response = await fetchJsonWithRetry(
-			`https://store.steampowered.com/api/packagedetails?${params}`,
+			`https://store.steampowered.com/api/packagedetails?${parameters}`,
 			packageId,
 			ctx,
 		);
@@ -484,7 +483,6 @@ export async function resolveAppIdForPackage(
 	}
 }
 
-
 export async function getHiddenGemMetadata(
 	appId: number,
 	packageId: string,
@@ -496,9 +494,9 @@ export async function getHiddenGemMetadata(
 	}
 
 	try {
-		const appDetailsParams = new URLSearchParams({appids: String(appId), filters: 'is_free,type'});
+		const appDetailsParameters = new URLSearchParams({appids: String(appId), filters: 'is_free,type'});
 		const appDetailsResponse = await fetchJsonWithRetry(
-			`https://store.steampowered.com/api/appdetails?${appDetailsParams}`,
+			`https://store.steampowered.com/api/appdetails?${appDetailsParameters}`,
 			packageId,
 			ctx,
 		);
@@ -520,15 +518,17 @@ export async function getHiddenGemMetadata(
 			return metadata;
 		}
 
-		const reviewsParams = new URLSearchParams({
+		/* eslint-disable @typescript-eslint/naming-convention -- Steam API requires snake_case query params */
+		const reviewsParameters = new URLSearchParams({
 			json: '1',
 			language: 'all',
 			purchase_type: 'all',
 			num_per_page: '0',
 			filter: 'summary',
 		});
+		/* eslint-enable @typescript-eslint/naming-convention */
 		const reviewsResponse = await fetchJsonWithRetry(
-			`https://store.steampowered.com/appreviews/${appId}?${reviewsParams}`,
+			`https://store.steampowered.com/appreviews/${appId}?${reviewsParameters}`,
 			packageId,
 			ctx,
 		);
@@ -990,7 +990,7 @@ function registerMessageListeners(): void {
 				isRunning = false;
 			});
 		} else if (request.type === 'GET_PAGE_IDS') {
-			const ids = Array.from(buildLinkMap().keys());
+			const ids = buildLinkMap().keys().toArray();
 			sendResponse({ids});
 		}
 	});

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/naming-convention -- Steam API responses use snake_case; mock objects must match */
 import {
 	describe,
 	it,
@@ -17,14 +18,12 @@ import {
 	resolveAppIdForPackage,
 	getHiddenGemMetadata,
 	evaluateHiddenGemProtection,
+	type ReviewReport,
+	type MetadataContext,
+	type RequestContext,
+	type EtaStats,
 } from './content.js';
 import type {DecisionReason, ItemDecision} from './types.js';
-import type {
-	ReviewReport,
-	MetadataContext,
-	RequestContext,
-	EtaStats,
-} from './content.js';
 
 describe('ACCOUNT_TABLE_ROW_HEIGHT_PX', () => {
 	it('is a positive integer', () => {
@@ -296,14 +295,14 @@ function makeCtx(overrides?: Partial<RequestContext>): RequestContext {
 /** Creates an anchor element with no DOM context (no surrounding tr). */
 function makeOrphanLink(packageId: string): HTMLAnchorElement {
 	const link = document.createElement('a');
-	// eslint-disable-next-line no-script-url
+
 	link.href = `javascript:RemoveFreeLicense(${packageId},'Game')`;
 	return link;
 }
 
 /** Creates a fetch Response with a JSON body. */
 function jsonResponse(body: unknown, status = 200): Response {
-	return new Response(JSON.stringify(body), {
+	return Response.json(body, {
 		status,
 		headers: {'Content-Type': 'application/json'},
 	});
@@ -316,7 +315,7 @@ describe('computeEtaStats', () => {
 	});
 
 	it('returns stats with no rate limits hit', () => {
-		const elapsed = 5000; // ms
+		const elapsed = 5000; // Ms
 		const report = makeFullReport({
 			processed: 5,
 			totalCandidates: 10,
@@ -324,7 +323,7 @@ describe('computeEtaStats', () => {
 			rateLimitCount: 0,
 			rateLimitTotalWaitMs: 0,
 		});
-		const result = computeEtaStats(report) as EtaStats;
+		const result = computeEtaStats(report)!;
 		expect(result).toBeDefined();
 		expect(Number(result.avgItemsPerMin)).toBeGreaterThan(0);
 		expect(result.rateLimitBreaksText).toBe('none so far');
@@ -339,7 +338,7 @@ describe('computeEtaStats', () => {
 			rateLimitCount: 2,
 			rateLimitTotalWaitMs: 120_000,
 		});
-		const result = computeEtaStats(report) as EtaStats;
+		const result = computeEtaStats(report)!;
 		expect(result.rateLimitBreaksText).toContain('2 hit');
 	});
 
@@ -351,7 +350,7 @@ describe('computeEtaStats', () => {
 			rateLimitCount: 0,
 			rateLimitTotalWaitMs: 0,
 		});
-		const result = computeEtaStats(report) as EtaStats;
+		const result = computeEtaStats(report)!;
 		// All items processed — remaining = 0 → ETA should be "Almost Done..."
 		expect(result.etaFormatted).toBe('Almost Done...');
 	});
@@ -448,21 +447,17 @@ describe('resolveAppIdForPackage', () => {
 	});
 
 	it('fetches from API and returns app ID on success', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			jsonResponse({'999': {success: true, data: {apps: [{id: 12345}]}}}),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({999: {success: true, data: {apps: [{id: 12_345}]}}}));
 		const context = makeMetadataContext();
 
 		const result = await resolveAppIdForPackage('999', makeOrphanLink('999'), context, makeCtx());
 
-		expect(result).toBe(12345);
-		expect(context.packageToAppCache.get('999')).toBe(12345);
+		expect(result).toBe(12_345);
+		expect(context.packageToAppCache.get('999')).toBe(12_345);
 	});
 
 	it('returns "dead" and caches undefined for success:false packages', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			jsonResponse({'999': {success: false}}),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({999: {success: false}}));
 		const context = makeMetadataContext();
 
 		const result = await resolveAppIdForPackage('999', makeOrphanLink('999'), context, makeCtx());
@@ -509,7 +504,7 @@ describe('getHiddenGemMetadata', () => {
 	it('returns metadata for a free game with review data', async () => {
 		vi.spyOn(globalThis, 'fetch')
 			.mockResolvedValueOnce(jsonResponse({
-				'440': {success: true, data: {is_free: true, type: 'game'}},
+				440: {success: true, data: {is_free: true, type: 'game'}},
 			}))
 			.mockResolvedValueOnce(jsonResponse({
 				query_summary: {review_score_desc: 'Very Positive', total_reviews: 5000},
@@ -524,7 +519,7 @@ describe('getHiddenGemMetadata', () => {
 
 	it('returns early metadata without reviews for a non-free app', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({
-			'730': {success: true, data: {is_free: false, type: 'game'}},
+			730: {success: true, data: {is_free: false, type: 'game'}},
 		}));
 
 		const context = makeMetadataContext();
@@ -546,7 +541,7 @@ describe('getHiddenGemMetadata', () => {
 	it('returns undefined when review summary is missing', async () => {
 		vi.spyOn(globalThis, 'fetch')
 			.mockResolvedValueOnce(jsonResponse({
-				'440': {success: true, data: {is_free: true, type: 'game'}},
+				440: {success: true, data: {is_free: true, type: 'game'}},
 			}))
 			.mockResolvedValueOnce(jsonResponse({query_summary: {}}));
 
@@ -564,9 +559,7 @@ describe('evaluateHiddenGemProtection', () => {
 	});
 
 	it('returns {} (allow deletion) for a dead package', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			jsonResponse({'123': {success: false}}),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({123: {success: false}}));
 		const context = makeMetadataContext();
 		const result = await evaluateHiddenGemProtection('123', makeOrphanLink('123'), context, makeCtx());
 		expect(result).toEqual({});
@@ -574,8 +567,8 @@ describe('evaluateHiddenGemProtection', () => {
 
 	it('returns {} (allow deletion) when app has no reviews yet', async () => {
 		vi.spyOn(globalThis, 'fetch')
-			.mockResolvedValueOnce(jsonResponse({'123': {success: true, data: {apps: [{id: 440}]}}}))
-			.mockResolvedValueOnce(jsonResponse({'440': {success: true, data: {is_free: true, type: 'game'}}}))
+			.mockResolvedValueOnce(jsonResponse({123: {success: true, data: {apps: [{id: 440}]}}}))
+			.mockResolvedValueOnce(jsonResponse({440: {success: true, data: {is_free: true, type: 'game'}}}))
 			.mockResolvedValueOnce(jsonResponse({query_summary: {review_score_desc: 'Very Positive', total_reviews: 0}}));
 
 		const context = makeMetadataContext();
@@ -585,8 +578,8 @@ describe('evaluateHiddenGemProtection', () => {
 
 	it('returns SKIP_HIDDEN_GEM for a free game with very positive reviews above threshold', async () => {
 		vi.spyOn(globalThis, 'fetch')
-			.mockResolvedValueOnce(jsonResponse({'123': {success: true, data: {apps: [{id: 440}]}}}))
-			.mockResolvedValueOnce(jsonResponse({'440': {success: true, data: {is_free: true, type: 'game'}}}))
+			.mockResolvedValueOnce(jsonResponse({123: {success: true, data: {apps: [{id: 440}]}}}))
+			.mockResolvedValueOnce(jsonResponse({440: {success: true, data: {is_free: true, type: 'game'}}}))
 			.mockResolvedValueOnce(jsonResponse({
 				query_summary: {review_score_desc: 'Very Positive', total_reviews: 600},
 			}));
@@ -607,15 +600,15 @@ describe('evaluateHiddenGemProtection', () => {
 		const result = await promise;
 
 		expect(result.reason).toBe('SKIP_METADATA_UNAVAILABLE');
-		expect(result.details).toMatch(/network error/i);
+		expect(result.details).toMatch(/network error/iv);
 
 		vi.useRealTimers();
 	});
 
 	it('returns SKIP_METADATA_UNAVAILABLE when metadata fetch returns undefined', async () => {
 		vi.spyOn(globalThis, 'fetch')
-			.mockResolvedValueOnce(jsonResponse({'123': {success: true, data: {apps: [{id: 440}]}}}))
-			.mockResolvedValueOnce(new Response('', {status: 500})); // appdetails fails
+			.mockResolvedValueOnce(jsonResponse({123: {success: true, data: {apps: [{id: 440}]}}}))
+			.mockResolvedValueOnce(new Response('', {status: 500})); // Appdetails fails
 
 		const context = makeMetadataContext();
 		const result = await evaluateHiddenGemProtection('123', makeOrphanLink('123'), context, makeCtx());
