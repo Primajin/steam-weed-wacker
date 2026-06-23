@@ -8,6 +8,9 @@ export default defineConfig({
 		react(),
 		crx({manifest}),
 	],
+	build: {
+		modulePreload: false,
+	},
 	server: {
 		port: 5173,
 		strictPort: true,
