@@ -31,6 +31,8 @@ Steam Weed Wacker helps you take large lists of free-package IDs, compare them a
 - [Using the extension](#using-the-extension)
 - [Permissions used](#permissions-used)
 - [Testing](#testing)
+- [Contributing](#contributing)
+- [Known limitations](#known-limitations)
 - [Important notes and cautions](#important-notes-and-cautions)
 - [Roadmap ideas](#roadmap-ideas)
 - [License](#license)
@@ -239,7 +241,7 @@ After building the project, load it as an unpacked extension:
 1. Open Chrome and go to `chrome://extensions/`
 2. Enable **Developer mode** in the top-right corner
 3. Click **Load unpacked**
-4. Select the project’s built extension directory
+4. Select the project root directory unless your local workflow outputs the extension to a separate build folder
 5. Confirm the extension appears in your installed extensions list
 6. Pin the extension for easier access if desired
 7. Open your Steam licenses page:
@@ -330,6 +332,34 @@ Or generate coverage with:
 npm run test:coverage
 ```
 
+## Contributing
+
+Contributions are welcome.
+
+If you want to improve the project:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run linting and tests
+5. Open a pull request with a clear description
+
+Helpful areas for contribution:
+
+- UI polish and usability improvements
+- Better onboarding for new users
+- More robust Steam page compatibility
+- Additional tests around edge cases and rate limiting
+- Documentation improvements and real screenshots
+
+## Known limitations
+
+- Steam may change the structure or behavior of the licenses page at any time.
+- Store APIs and removal behavior may rate limit aggressively during larger runs.
+- Some licenses may return inconsistent results, which is why zombie detection exists.
+- Metadata lookups can fail temporarily, causing fail-safe skips.
+- Exact unpacked-extension loading behavior can vary depending on the local build workflow.
+
 ## Important notes and cautions
 
 - This project interacts with your real Steam account page.
@@ -358,12 +388,3 @@ This project is released under **The Unlicense**. See [`LICENSE`](./LICENSE) for
 
 - [SteamDB Free Packages](https://steamdb.info/freepackages/) for the package discovery workflow that inspired this tool
 - The Steam account license page, which this extension automates carefully and defensively
-
----
-
-If you want, I can also do a final polish pass to add:
-
-- a shorter GitHub-social preview intro
-- a “Contributing” section
-- a “Known limitations” section
-- more exact build-output wording once the extension load path is confirmed
