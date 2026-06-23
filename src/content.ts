@@ -48,6 +48,7 @@ export type ReviewReport = {
 	startedAt: number;
 	rateLimitCount: number;
 	rateLimitTotalWaitMs: number;
+	rateLimitTotalScheduledMs: number;
 	deletedCount: number;
 	errorCount: number;
 	skipCounts: Partial<Record<SkipReason, number>>;
@@ -197,7 +198,7 @@ export function computeEtaStats(report: ReviewReport): EtaStats | undefined {
 		? Math.ceil((remainingItems * report.rateLimitCount) / report.processed)
 		: 0;
 	const avgWaitMsPerBreak = report.rateLimitCount > 0
-		? report.rateLimitTotalWaitMs / report.rateLimitCount
+		? report.rateLimitTotalScheduledMs / report.rateLimitCount
 		: DEFAULT_RETRY_AFTER_SECONDS * 1000;
 	const processingEtaMs = avgMsPerItem * remainingItems;
 	const breakEtaMs = expectedMoreBreaks * avgWaitMsPerBreak;
@@ -404,6 +405,7 @@ async function fetchJsonWithRetry(
 				}
 
 				ctx.report.rateLimitCount++;
+				ctx.report.rateLimitTotalScheduledMs += waitTime * 1000;
 				const endAt = Date.now() + (waitTime * 1000);
 				let remaining = waitTime;
 				while (remaining > 0 && !isStopRequested) {
@@ -621,6 +623,7 @@ async function awaitCooldown(
 	makeBanner: (remaining: number) => string,
 ): Promise<boolean> {
 	ctx.report.rateLimitCount++;
+	ctx.report.rateLimitTotalScheduledMs += waitSeconds * 1000;
 	const endAt = Date.now() + (waitSeconds * 1000);
 	let remaining = waitSeconds;
 	while (remaining > 0 && !isStopRequested) {
@@ -957,6 +960,7 @@ async function removeTrashLicenses({
 		startedAt: performance.now(),
 		rateLimitCount: 0,
 		rateLimitTotalWaitMs: 0,
+		rateLimitTotalScheduledMs: 0,
 		deletedCount: 0,
 		errorCount: 0,
 		skipCounts: {},
