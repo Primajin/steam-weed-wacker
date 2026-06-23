@@ -475,12 +475,14 @@ export async function batchResolveAppIds(
   for (let i = 0; i < packageIds.length; i += BATCH_PACKAGE_LIMIT) {
     if (isStopRequested) break;
     const batch = packageIds.slice(i, i + BATCH_PACKAGE_LIMIT);
-    const params = new URLSearchParams({packageids: batch.join(',')});
+    // Steam's packagedetails API rejects percent-encoded commas (%2C); use a
+    // literal comma-separated list. Package IDs are digits only — no encoding needed.
+    const batchUrl = `https://store.steampowered.com/api/packagedetails?packageids=${batch.join(',')}`;
 
     try {
       // eslint-disable-next-line no-await-in-loop
       const response = await fetchJsonWithRetry(
-        `https://store.steampowered.com/api/packagedetails?${params}`,
+        batchUrl,
         batch[0]!,
         ctx,
       );
