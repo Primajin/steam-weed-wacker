@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Superpowers / AI tooling
+.superpowers
+docs/superpowers
+
+# Coverage
+coverage
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
