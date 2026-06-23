@@ -366,7 +366,7 @@ async function fetchJsonWithRetry(
 				ctx.report.rateLimitCount++;
 				const endAt = Date.now() + (waitTime * 1000);
 				let remaining = waitTime;
-				while (remaining > 0) {
+				while (remaining > 0 && !isStopRequested) {
 					updateUi(
 						ctx.dashboard,
 						ctx.report,
@@ -379,6 +379,10 @@ async function fetchJsonWithRetry(
 					await sleep(500);
 					ctx.report.rateLimitTotalWaitMs += 500;
 					remaining = Math.ceil((endAt - Date.now()) / 1000);
+				}
+
+				if (isStopRequested) {
+					throw new Error('Stopped by user.');
 				}
 
 				networkRetries = 0;
@@ -469,6 +473,7 @@ export async function batchResolveAppIds(
   ctx: RequestContext,
 ): Promise<void> {
   for (let i = 0; i < packageIds.length; i += BATCH_PACKAGE_LIMIT) {
+    if (isStopRequested) break;
     const batch = packageIds.slice(i, i + BATCH_PACKAGE_LIMIT);
     const params = new URLSearchParams({packageids: batch.join(',')});
 
@@ -662,7 +667,7 @@ async function deletePackageWithRetry(
 					void chrome.runtime.sendMessage({type: 'NOTIFY_BAN'});
 					const endAt = Date.now() + (RATE_LIMIT_COOLDOWN_SECONDS * 1000);
 					let remaining = RATE_LIMIT_COOLDOWN_SECONDS;
-					while (remaining > 0) {
+					while (remaining > 0 && !isStopRequested) {
 						updateUi(
 							dashboard,
 							report,
@@ -674,6 +679,10 @@ async function deletePackageWithRetry(
 						// eslint-disable-next-line no-await-in-loop
 						await sleep(500);
 						remaining = Math.ceil((endAt - Date.now()) / 1000);
+					}
+
+					if (isStopRequested) {
+						return {reason: 'ERROR', details: 'Stopped by user during rate-limit cooldown.'};
 					}
 
 					continue;
@@ -691,7 +700,7 @@ async function deletePackageWithRetry(
 
 				const endAt = Date.now() + (waitTime * 1000);
 				let remaining = waitTime;
-				while (remaining > 0) {
+				while (remaining > 0 && !isStopRequested) {
 					updateUi(
 						dashboard,
 						report,
@@ -703,6 +712,10 @@ async function deletePackageWithRetry(
 					// eslint-disable-next-line no-await-in-loop
 					await sleep(500);
 					remaining = Math.ceil((endAt - Date.now()) / 1000);
+				}
+
+				if (isStopRequested) {
+					return {reason: 'ERROR', details: 'Stopped by user during rate-limit cooldown.'};
 				}
 
 				continue;
@@ -859,7 +872,7 @@ async function removeTrashLicenses({
 		needsBatchResolution.push(packageId);
 	}
 
-	if (needsBatchResolution.length > 0) {
+	if (needsBatchResolution.length > 0 && !isStopRequested) {
 		await batchResolveAppIds(needsBatchResolution, metadataContext, {dashboard, report});
 		await savePersistentContext(metadataContext);
 	}
