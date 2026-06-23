@@ -20,7 +20,7 @@ import {PYTHON_PEARLS_STORAGE_KEY} from './constants.js';
 const METADATA_TIMEOUT_MS = 12_000;
 const MAX_NETWORK_RETRIES = 5;
 
-const ITEM_ROW_HEIGHT = 58; // Fixed height (px) of each per-item decision row
+const ITEM_ROW_HEIGHT = 72; // Fixed height (px) of each per-item decision row
 const VIRTUAL_LIST_HEIGHT = 180; // Max-height (px) of the scrollable list container
 const VIRTUAL_BUFFER = 2; // Extra rows to render above and below the visible window
 
@@ -321,8 +321,11 @@ function updateUi(
 			const display = REASON_DISPLAY[item.reason];
 			const idLabel = `<strong style="color: ${display.color}">${display.icon} ${escapeHtml(item.packageId)}</strong>`
 				+ ` <span style="color: #c6d4df; font-size: 11px;">${display.label}</span>`;
+			const ts = new Date(item.timestamp);
+			const timeStr = `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}:${String(ts.getSeconds()).padStart(2, '0')}`;
 			return `
 				<li style="height: ${ITEM_ROW_HEIGHT}px; box-sizing: border-box; padding: 4px 0 6px 8px; border-bottom: 1px solid #2a475e; border-left: 3px solid ${display.color}; overflow: hidden;">
+					<div style="font-size: 10px; color: #8f98a0;">${timeStr}</div>
 					<div style="font-size: 12px;">${idLabel}</div>
 					<div style="font-size: 11px; color: #8f98a0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.title)}</div>
 					${item.details === undefined ? '' : `<div style="font-size: 11px; color: #8f98a0;">${escapeHtml(item.details)}</div>`}
@@ -387,7 +390,7 @@ async function fetchJsonWithRetry(
 						ctx.report,
 						packageId,
 						`<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
-							⚠️ Store API rate-limited (429). Waiting ${remaining}s before retry...
+							⚠️ Store API rate-limited (429). Waiting ${formatTime(remaining)} before retry...
 						</div>`,
 						ctx.currentTitle,
 					);
@@ -648,7 +651,7 @@ async function deletePackageWithRetry(
 							report,
 							packageId,
 							`<div style="background: rgba(229, 64, 34, 0.2); border: 1px solid #e54022; padding: 8px; border-radius: 4px; color: #e54022; margin-bottom: 10px; text-align: center; font-size: 12px;">
-								🛑 Rate limit exceeded (Code 84). Waiting ${remaining}s before retry.
+								🛑 Rate limit exceeded (Code 84). Waiting ${formatTime(remaining)} before retry.
 							</div>`,
 							currentTitle,
 						);
@@ -682,7 +685,7 @@ async function deletePackageWithRetry(
 						report,
 						packageId,
 						`<div style="background: rgba(229, 168, 34, 0.2); border: 1px solid #e5a822; padding: 8px; border-radius: 4px; color: #e5a822; margin-bottom: 10px; text-align: center; font-size: 12px;">
-							⚠️ HTTP 429. Waiting ${remaining}s before retry.
+							⚠️ HTTP 429. Waiting ${formatTime(remaining)} before retry.
 						</div>`,
 						currentTitle,
 					);
@@ -744,8 +747,8 @@ async function savePersistentContext(context: MetadataContext): Promise<void> {
 	});
 }
 
-export function recordDecision(report: ReviewReport, decision: ItemDecision): void {
-	report.items.push(decision);
+export function recordDecision(report: ReviewReport, decision: Omit<ItemDecision, 'timestamp'>): void {
+	report.items.push({...decision, timestamp: Date.now()});
 	report.processed++;
 	if (decision.reason === 'DELETE') {
 		report.deletedCount++;
@@ -835,7 +838,7 @@ async function removeTrashLicenses({
 		const title = link === undefined ? `Package ${packageId}` : extractTitle(link, packageId);
 		const rowText = link?.closest('tr')?.textContent ?? '';
 
-		let decision: ItemDecision;
+		let decision: Omit<ItemDecision, 'timestamp'>;
 		if (protectedIdSet.has(packageId)) {
 			decision = {
 				packageId,

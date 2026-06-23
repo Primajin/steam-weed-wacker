@@ -30,4 +30,5 @@ export type ItemDecision = {
 	title: string;
 	reason: DecisionReason;
 	details?: string;
+	timestamp: number;
 };
